@@ -4,6 +4,7 @@ import { nanoid } from "nanoid";
 import i18n from "@/i18n";
 import { withLocalProxy } from "@/stores/use-config-store";
 import { createImageThumbnail } from "@/lib/image-thumbnail";
+import { remoteFileStore } from "@/lib/remote-file-store";
 
 export type UploadedImage = {
     url: string;
@@ -14,8 +15,32 @@ export type UploadedImage = {
     mimeType: string;
 };
 
-const store = localforage.createInstance({ name: "infinite-canvas", storeName: "image_files" });
-const previewStore = localforage.createInstance({ name: "infinite-canvas", storeName: "image_previews" });
+// POC：image_files 写到本地存储服务，其余三个 store 仍走 IndexedDB。
+const store = remoteFileStore("image_files") as unknown as typeof localforage;
+
+// 缩略图存的是 { version, blob } 对象，不能直接塞进 Blob 存储：
+// version 编进 Content-Type（image/webp; v=1），读回来再拆开。
+const remotePreviews = remoteFileStore("image_previews");
+const previewStore = {
+    async getItem<T = unknown>(key: string): Promise<T | null> {
+        const blob = await remotePreviews.getItem<Blob>(key);
+        if (!blob) return null;
+        const match = /;\s*v=(\d+)/i.exec(blob.type || "");
+        return { version: match ? Number(match[1]) : 0, blob: new Blob([blob], { type: "image/webp" }) } as T;
+    },
+    async setItem<T = unknown>(key: string, value: T): Promise<T> {
+        const { version, blob } = value as StoredImagePreview;
+        if (!blob) return value;
+        await remotePreviews.setItem(key, new Blob([blob], { type: `image/webp; v=${version}` }));
+        return value;
+    },
+    removeItem(key: string) {
+        return remotePreviews.removeItem(key);
+    },
+    iterate<T, U>(callback: (value: T, key: string, iterationNumber: number) => U) {
+        return remotePreviews.iterate<T, U>(callback);
+    },
+};
 const imageLogStore = localforage.createInstance({ name: "infinite-canvas", storeName: "image_generation_logs" });
 const videoLogStore = localforage.createInstance({ name: "infinite-canvas", storeName: "video_generation_logs" });
 const objectUrls = new Map<string, string>();

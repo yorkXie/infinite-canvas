@@ -1,12 +1,21 @@
 import localforage from "localforage";
 import type { StateStorage } from "zustand/middleware";
 
+import { remoteTextStore } from "@/lib/remote-file-store";
+
 localforage.config({
     name: "infinite-canvas",
     storeName: "app_state",
 });
 
-export const localForageStorage: StateStorage = {
+/**
+ * 回滚开关。
+ * true  -> 画布结构 / 资产 / 插件状态写到本地存储服务（store-server）
+ * false -> 完全回到浏览器 IndexedDB，行为和改造前一致
+ */
+const USE_REMOTE_STORE = true;
+
+const legacyStorage: StateStorage = {
     getItem: async (name) => {
         if (typeof window === "undefined") return null;
         try {
@@ -32,3 +41,7 @@ export const localForageStorage: StateStorage = {
         }
     },
 };
+
+export const localForageStorage: StateStorage = USE_REMOTE_STORE
+    ? (remoteTextStore("app_state") as StateStorage)
+    : legacyStorage;

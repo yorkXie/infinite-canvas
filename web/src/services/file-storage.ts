@@ -1,11 +1,13 @@
 import localforage from "localforage";
 import { nanoid } from "nanoid";
 
+import { remoteFileStore } from "@/lib/remote-file-store";
 import { withLocalProxy } from "@/stores/use-config-store";
 
 export type UploadedFile = { url: string; storageKey: string; bytes: number; mimeType: string; width?: number; height?: number; durationMs?: number };
 
-const store = localforage.createInstance({ name: "infinite-canvas", storeName: "media_files" });
+// 视频/音频单个体积比图片大得多，优先搬到磁盘，避免 C 盘被吃光。
+const store = remoteFileStore("media_files") as unknown as typeof localforage;
 const objectUrls = new Map<string, string>();
 
 export async function uploadMediaFile(input: string | Blob, prefix = "file"): Promise<UploadedFile> {
