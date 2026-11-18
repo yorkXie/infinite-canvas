@@ -9,7 +9,7 @@ import { requestEdit, requestGeneration, requestImageQuestion } from "@/services
 import { requestAudioGeneration, storeGeneratedAudio } from "@/services/api/audio";
 import { createVideoGenerationTask, isVideoTaskFailed, storeGeneratedVideo, waitForVideoGenerationTask } from "@/services/api/video";
 import { defaultConfig, useConfigStore, useEffectiveConfig } from "@/stores/use-config-store";
-import { ensureImagePreview, uploadImage } from "@/services/image-storage";
+import { ensureImagePreview, getImageBlob, previewUrlFor, resolveImageUrl, uploadImage } from "@/services/image-storage";
 import { uploadMediaFile, type UploadedFile } from "@/services/file-storage";
 import { nanoid } from "nanoid";
 import { getDataUrlByteSize, readImageMeta } from "@/lib/image-utils";
@@ -141,6 +141,16 @@ function applyGeneratedVideo(item: CanvasNodeData, video: UploadedFile, extra: C
         position: { x: item.position.x + item.width / 2 - videoSize.width / 2, y: item.position.y + item.height / 2 - videoSize.height / 2 },
         metadata: { ...item.metadata, ...videoMetadata(video), ...extra },
     };
+}
+
+/** 把指定图片挪到数组最前（数组顺序就是显示顺序：第一位即主图）。 */
+function moveImageToFront(images: CanvasNodeImage[], imageId: string): CanvasNodeImage[] {
+    const index = images.findIndex((image) => image.id === imageId);
+    if (index <= 0) return images;
+    const next = [...images];
+    const [moved] = next.splice(index, 1);
+    next.unshift(moved);
+    return next;
 }
 
 export default function CanvasPage() {
@@ -737,7 +747,32 @@ function InfiniteCanvasPage() {
     const angleNode = angleNodeId ? nodeById.get(angleNodeId) || null : null;
     const contextMenuNode = contextMenu?.type === "node" ? nodeById.get(contextMenu.nodeId) || null : null;
     const previewNode = previewNodeId ? nodeById.get(previewNodeId) || null : null;
-    const previewContent = previewImageId ? previewNode?.metadata?.images?.find((image) => image.id === previewImageId)?.content : previewNode?.metadata?.content;
+    // 数组顺序就是显示顺序（第一位即主图），这里只过滤掉没有内容的占位
+    const previewImages = (previewNode?.metadata?.images ?? []).filter((image) => Boolean(image.content));
+    const previewActiveId = previewImageId || previewNode?.metadata?.primaryImageId;
+    const previewImage = previewImages.find((image) => image.id === previewActiveId) ?? previewImages[0];
+    const previewContent = previewImage?.content || previewNode?.metadata?.content;
+    const previewWidth = previewImage?.naturalWidth || previewNode?.metadata?.naturalWidth;
+    const previewHeight = previewImage?.naturalHeight || previewNode?.metadata?.naturalHeight;
+    const previewCreatedAt = previewImage?.createdAt;
+    const previewModel = previewImage?.model || previewNode?.metadata?.model;
+    const previewIndex = Math.max(0, previewImages.findIndex((image) => image.id === previewImage?.id));
+    // blob URL 刷新后就失效了：详情改用 storageKey 解析原图，预览图先顶上避免空白
+    const previewStorageKey = previewImage?.storageKey || previewNode?.metadata?.storageKey;
+    const [previewResolvedSrc, setPreviewResolvedSrc] = useState("");
+    useEffect(() => {
+        setPreviewResolvedSrc("");
+        if (!previewStorageKey) return;
+        let alive = true;
+        void resolveImageUrl(previewStorageKey, previewContent || "").then((url) => {
+            if (alive && url) setPreviewResolvedSrc(url);
+        });
+        return () => {
+            alive = false;
+        };
+    }, [previewStorageKey, previewContent]);
+    const previewSrc = previewResolvedSrc || previewUrlFor(previewStorageKey) || previewContent || "";
+    const previewIsPrimary = Boolean(previewImage?.content) && previewNode?.metadata?.content === previewImage?.content;
     const hasMultipleSelectedNodes = selectedNodeIds.size > 1;
     const selectedNodes = useMemo(() => nodes.filter((node) => selectedNodeIds.has(node.id)), [nodes, selectedNodeIds]);
     const canGroupSelection = canGroupSelectedNodes(selectedNodeIds, nodes);
@@ -1735,7 +1770,7 @@ function InfiniteCanvasPage() {
                 const image = node.metadata?.images?.find((item) => item.id === itemId);
                 if (!image?.content) return node;
                 const edge = Math.max(node.width, node.height);
-                const size = node.metadata?.freeResize ? { width: node.width, height: node.height } : fitNodeSize(image.naturalWidth, image.naturalHeight, edge, edge);
+                const size = node.metadata?.freeResize ? { width: node.width, height: node.height } : fitNodeSize(image.naturalWidth, image.naturalHeight, node.width, node.height);
                 return {
                     ...node,
                     position: { x: node.position.x + node.width / 2 - size.width / 2, y: node.position.y + node.height / 2 - size.height / 2 },
@@ -1748,6 +1783,8 @@ function InfiniteCanvasPage() {
                         naturalHeight: image.naturalHeight,
                         bytes: image.bytes,
                         mimeType: image.mimeType,
+                        // 设为主图 = 挪到数组第一位（数组顺序即显示顺序）
+                        images: moveImageToFront(node.metadata?.images ?? [], image.id),
                         primaryImageId: image.id,
                     },
                 };
@@ -1798,15 +1835,19 @@ function InfiniteCanvasPage() {
         setNodes((prev) => prev.map((node) => (node.id === nodeId ? applyNodeConfigPatch(node, patch) : node)));
     }, []);
 
-    const downloadNodeImage = useCallback((node: CanvasNodeData) => {
+    const downloadNodeImage = useCallback(async (node: CanvasNodeData) => {
         if ((node.type !== CanvasNodeType.Image && node.type !== CanvasNodeType.Video && node.type !== CanvasNodeType.Audio) || !node.metadata?.content) return;
-        saveAs(node.metadata.content, `canvas-${node.type}-${node.id}.${node.type === CanvasNodeType.Video ? "mp4" : node.type === CanvasNodeType.Audio ? audioExtension(node.metadata.mimeType) : imageExtension(node.metadata.content)}`);
+        // 优先从 storageKey 取原图：content 在运行时有可能是 768 长边的预览，下载会得到缩略图
+        const original = node.metadata.storageKey ? await getImageBlob(node.metadata.storageKey).catch(() => null) : null;
+        saveAs(original ?? node.metadata.content, `canvas-${node.type}-${node.id}.${node.type === CanvasNodeType.Video ? "mp4" : node.type === CanvasNodeType.Audio ? audioExtension(node.metadata.mimeType) : imageExtension(node.metadata.content)}`);
     }, []);
 
-    const downloadBatchImage = useCallback((node: CanvasNodeData, imageId: string) => {
+    const downloadBatchImage = useCallback(async (node: CanvasNodeData, imageId: string) => {
         const image = node.metadata?.images?.find((item) => item.id === imageId);
         if (!image?.content) return;
-        saveAs(image.content, `canvas-image-${node.id}-${image.id}.${imageExtension(image.content)}`);
+        // 同上：用原图 blob，避免下到预览缩略图
+        const original = image.storageKey ? await getImageBlob(image.storageKey).catch(() => null) : null;
+        saveAs(original ?? image.content, `canvas-image-${node.id}-${image.id}.${imageExtension(image.content)}`);
     }, []);
 
     const captureVideoNodeFrame = useCallback(
@@ -2366,7 +2407,10 @@ function InfiniteCanvasPage() {
             }
 
             setRunningNodeId(nodeId);
-            const overwriteExisting = effectiveConfig.nodeRegenerateBehavior === "overwrite";
+            const overwriteExisting =
+                effectiveConfig.nodeRegenerateBehavior === "overwrite" || effectiveConfig.nodeRegenerateBehavior === "overwrite-stack";
+            // 保留历史模式：原地重生，但把旧结果留在节点的 images 里（新图追加在后，成为主图）
+            const keepHistory = effectiveConfig.nodeRegenerateBehavior === "overwrite-stack";
             const runController = startGenerationRequest(nodeId, nodeId, nodeId);
             const sourceTextContent = sourceNode?.type === CanvasNodeType.Text ? sourceNode.metadata?.content?.trim() || "" : "";
             const editingTextNode = mode === "text" && Boolean(sourceTextContent);
@@ -2421,7 +2465,16 @@ function InfiniteCanvasPage() {
                         metadata: {
                             prompt: effectivePrompt,
                             status: NODE_STATUS_LOADING,
-                            images: imageIds.map((id) => ({ id, status: NODE_STATUS_LOADING, content: "", naturalWidth: 0, naturalHeight: 0, bytes: 0, mimeType: "" })),
+                            images: [
+                                // 新图排在最前：渲染时 primaryImageId 为空会回退 images[0]，
+                                // 放前面才能让节点在生成期间显示 loading，而不是继续显示旧图。
+                                ...imageIds.map((id) => ({ id, status: NODE_STATUS_LOADING, content: "", naturalWidth: 0, naturalHeight: 0, bytes: 0, mimeType: "" })),
+
+                                // 保留历史模式：旧图接在后面（只留真正有内容的）
+                                ...(keepHistory && isImageNode
+                                    ? (sourceNode?.metadata?.images ?? []).filter((image) => Boolean(image.content))
+                                    : []),
+                            ],
                             primaryImageId: undefined,
                             ...generationMetadata,
                         },
@@ -2477,28 +2530,34 @@ function InfiniteCanvasPage() {
                                     ? await requestEdit({ ...generationConfig, count: "1" }, effectivePrompt, referenceImages, { signal: controller.signal }).then((items) => items[0])
                                     : await requestGeneration({ ...generationConfig, count: "1" }, effectivePrompt, { signal: controller.signal }).then((items) => items[0]);
                                 const uploaded = await uploadImage(image.dataUrl, { signal: controller.signal });
-                                const imageSize = fitNodeSize(uploaded.width, uploaded.height, imageConfig.width, imageConfig.height);
-                                const item: CanvasNodeImage = { id: imageId, status: NODE_STATUS_SUCCESS, content: uploaded.url, storageKey: uploaded.storageKey, naturalWidth: uploaded.width, naturalHeight: uploaded.height, bytes: uploaded.bytes, mimeType: uploaded.mimeType };
+                                const item: CanvasNodeImage = { id: imageId, status: NODE_STATUS_SUCCESS, content: uploaded.url, storageKey: uploaded.storageKey, naturalWidth: uploaded.width, naturalHeight: uploaded.height, bytes: uploaded.bytes, mimeType: uploaded.mimeType, createdAt: Date.now(), model: generationConfig.model };
                                 setNodes((prev) =>
                                     prev.map((node) => {
                                         if (node.id !== rootId) return node;
-                                        const images = node.metadata?.images?.map((image) => (image.id === imageId ? item : image)) || [];
-                                        if (node.metadata?.primaryImageId) return { ...node, metadata: { ...node.metadata, images } };
+                                        // 新图直接插到最前，数组第一位就是主图
+                                        const images = [item, ...(node.metadata?.images ?? []).filter((image) => image.id !== imageId)];
+                                        const primary = images[0];
+                                        if (!primary) return { ...node, metadata: { ...node.metadata, images } };
+                                        if (node.metadata?.primaryImageId === primary.id && node.metadata?.content === primary.content) {
+                                            return { ...node, metadata: { ...node.metadata, images } };
+                                        }
+                                        // 以节点当前尺寸为基准：用户手动调过大小就保持，不要回到默认 340x240
+                                        const primarySize = node.metadata?.freeResize ? { width: node.width, height: node.height } : fitNodeSize(primary.naturalWidth, primary.naturalHeight, node.width, node.height);
                                         const center = { x: node.position.x + node.width / 2, y: node.position.y + node.height / 2 };
                                         return {
                                             ...node,
-                                            position: { x: center.x - imageSize.width / 2, y: center.y - imageSize.height / 2 },
-                                            ...imageSize,
+                                            position: { x: center.x - primarySize.width / 2, y: center.y - primarySize.height / 2 },
+                                            ...primarySize,
                                             metadata: {
                                                 ...node.metadata,
-                                                content: item.content,
-                                                storageKey: item.storageKey,
-                                                naturalWidth: item.naturalWidth,
-                                                naturalHeight: item.naturalHeight,
-                                                bytes: item.bytes,
-                                                mimeType: item.mimeType,
+                                                content: primary.content,
+                                                storageKey: primary.storageKey,
+                                                naturalWidth: primary.naturalWidth,
+                                                naturalHeight: primary.naturalHeight,
+                                                bytes: primary.bytes,
+                                                mimeType: primary.mimeType,
                                                 images,
-                                                primaryImageId: imageId,
+                                                primaryImageId: primary.id,
                                             },
                                         };
                                     }),
@@ -2858,6 +2917,8 @@ function InfiniteCanvasPage() {
                     naturalHeight: uploadedImage.height,
                     bytes: uploadedImage.bytes,
                     mimeType: uploadedImage.mimeType,
+                    createdAt: Date.now(),
+                    model: generationConfig.model,
                 };
                 const generationMetadata = savedImageMetadata?.generationType
                     ? {
@@ -2873,9 +2934,11 @@ function InfiniteCanvasPage() {
                 setNodes((prev) =>
                     prev.map((item) => {
                         if (item.id !== node.id) return item;
-                        const makePrimary = !imageId || !item.metadata?.content;
-                        const edge = imageId ? Math.max(item.width, item.height) : 0;
-                        const imageSize = imageId && item.metadata?.freeResize ? { width: item.width, height: item.height } : imageId ? fitNodeSize(uploadedImage.width, uploadedImage.height, edge, edge) : fitNodeSize(uploadedImage.width, uploadedImage.height, imageConfig.width, imageConfig.height);
+                        // 重试的新图插到最前，自然成为主图
+                        const retryImages = [retryImage, ...(item.metadata?.images ?? []).filter((current) => current.id !== retryImage.id)];
+                        const retryPrimary = retryImages[0];
+                        const makePrimary = retryPrimary?.id === retryImage.id;
+                        const imageSize = item.metadata?.freeResize ? { width: item.width, height: item.height } : fitNodeSize(uploadedImage.width, uploadedImage.height, item.width, item.height);
                         return {
                             ...item,
                             type: CanvasNodeType.Image,
@@ -2883,7 +2946,7 @@ function InfiniteCanvasPage() {
                             metadata: {
                                 ...item.metadata,
                                 ...(makePrimary ? imageMetadata(uploadedImage) : { status: NODE_STATUS_SUCCESS }),
-                                images: item.metadata?.images?.map((current) => (current.id === retryImage.id ? retryImage : current)),
+                                images: retryImages,
                                 primaryImageId: makePrimary ? retryImage.id : item.metadata?.primaryImageId,
                                 prompt,
                                 ...generationMetadata,
@@ -3444,12 +3507,83 @@ function InfiniteCanvasPage() {
                     title={t("canvas.projectPage.imageDetails")}
                     open={Boolean(previewContent)}
                     centered
-                    onCancel={() => setPreviewNodeId(null)}
+                    onCancel={() => {
+                        setPreviewNodeId(null);
+                        setPreviewImageId(null);
+                    }}
                     footer={null}
                     width="auto"
-                    styles={{ body: { padding: 0, display: "flex", justifyContent: "center", alignItems: "center", maxHeight: "80vh" } }}
+                    styles={{ body: { padding: 0, display: "flex", justifyContent: "center", alignItems: "stretch" } }}
                 >
-                    {previewContent ? <img src={previewContent} alt={previewNode?.title || t("assets.kinds.image")} style={{ maxWidth: "100%", maxHeight: "80vh", objectFit: "contain" }} /> : null}
+                    {previewContent ? (
+                        <div className="flex items-stretch">
+                            {previewImages.length > 1 ? (
+                                <div className="flex w-auto shrink-0 flex-col items-center gap-2 overflow-y-auto border-r px-3 py-3">
+                                    <span className="text-[11px] opacity-60">
+                                        {previewIndex + 1} / {previewImages.length}
+                                    </span>
+                                    {previewImages.map((image) => {
+                                        const active = image.id === previewImage?.id;
+                                        return (
+                                            <button
+                                                key={image.id}
+                                                type="button"
+                                                onClick={() => setPreviewImageId(image.id)}
+                                                className={`h-20 w-20 shrink-0 overflow-hidden rounded-lg border-2 transition ${active ? "border-current opacity-100" : "border-transparent opacity-50 hover:opacity-80"}`}
+                                                title={image.model ? image.model.split("::").pop() : undefined}
+                                            >
+                                                <img src={image.content} alt="" className="h-full w-full object-cover" />
+                                            </button>
+                                        );
+                                    })}
+                                </div>
+                            ) : null}
+                            <div className="flex min-w-0 items-center justify-center">
+                                <img src={previewSrc} alt={previewNode?.title || t("assets.kinds.image")} style={{ width: "auto", height: "auto", maxHeight: "82vh", maxWidth: "calc(92vw - 330px)", objectFit: "contain" }} />
+                            </div>
+                            <div className="flex w-auto shrink-0 flex-col gap-4 overflow-y-auto border-l px-3 py-3 text-xs whitespace-nowrap">
+                                {previewWidth && previewHeight ? (
+                                    <div>
+                                        <div className="mb-1 opacity-50">{t("canvas.projectPage.imageDetailsResolution")}</div>
+                                        <div className="text-[13px]">
+                                            {previewWidth} × {previewHeight}
+                                        </div>
+                                    </div>
+                                ) : null}
+                                {previewModel ? (
+                                    <div>
+                                        <div className="mb-1 opacity-50">{t("canvas.projectPage.imageDetailsModel")}</div>
+                                        <div className="text-[13px] break-all">{previewModel.split("::").pop()}</div>
+                                    </div>
+                                ) : null}
+                                {previewCreatedAt ? (
+                                    <div>
+                                        <div className="mb-1 opacity-50">{t("canvas.projectPage.imageDetailsDate")}</div>
+                                        <div className="text-[13px]">{new Date(previewCreatedAt).toLocaleString()}</div>
+                                    </div>
+                                ) : null}
+                                {previewNode && previewImage ? (
+                                    <button
+                                        type="button"
+                                        disabled={previewIsPrimary}
+                                        onClick={() => setBatchPrimary(previewNode.id, previewImage.id)}
+                                        className="w-full rounded-lg border px-2 py-1.5 text-xs transition disabled:cursor-default disabled:opacity-40 enabled:hover:opacity-75"
+                                    >
+                                        {previewIsPrimary ? t("canvas.node.primary") : t("canvas.node.setPrimary")}
+                                    </button>
+                                ) : null}
+                                {previewNode ? (
+                                    <button
+                                        type="button"
+                                        onClick={() => (previewImage ? void downloadBatchImage(previewNode, previewImage.id) : downloadNodeImage(previewNode))}
+                                        className="w-full rounded-lg border px-2 py-1.5 text-xs transition hover:opacity-75"
+                                    >
+                                        {t("common.download")}
+                                    </button>
+                                ) : null}
+                            </div>
+                        </div>
+                    ) : null}
                 </Modal>
 
                 <Modal

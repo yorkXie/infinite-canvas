@@ -275,6 +275,10 @@ export function AppConfigPanel({ showDoneButton = false, initialTab = "channels"
                                             <span className="block text-sm font-medium">{t("config.preferences.regenerateBehaviorOverwrite")}</span>
                                             <span className="mt-0.5 block text-xs opacity-60">{t("config.preferences.regenerateBehaviorOverwriteDescription")}</span>
                                         </Radio>
+                                        <Radio value="overwrite-stack">
+                                            <span className="block text-sm font-medium">{t("config.preferences.regenerateBehaviorStack")}</span>
+                                            <span className="mt-0.5 block text-xs opacity-60">{t("config.preferences.regenerateBehaviorStackDescription")}</span>
+                                        </Radio>
                                         <Radio value="new-node">
                                             <span className="block text-sm font-medium">{t("config.preferences.regenerateBehaviorNewNode")}</span>
                                             <span className="mt-0.5 block text-xs opacity-60">{t("config.preferences.regenerateBehaviorNewNodeDescription")}</span>

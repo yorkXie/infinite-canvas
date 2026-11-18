@@ -1,9 +1,10 @@
 import { useMemo } from "react";
 import { create } from "zustand";
-import { persist } from "zustand/middleware";
+import { createJSONStorage, persist } from "zustand/middleware";
 import { nanoid } from "nanoid";
 
 import i18n from "@/i18n";
+import { remoteTextStore } from "@/lib/remote-file-store";
 
 export type ApiCallFormat = "openai" | "gemini";
 export type ModelCapability = "image" | "video" | "text" | "audio";
@@ -54,7 +55,7 @@ export type AiConfig = {
     canvasImageCount: string;
     proxyEnabled: boolean;
     proxyUrl: string;
-    nodeRegenerateBehavior: "new-node" | "overwrite";
+    nodeRegenerateBehavior: "new-node" | "overwrite" | "overwrite-stack";
     autoFocusOnSelect: boolean;
 };
 
@@ -247,6 +248,18 @@ export const useConfigStore = create<ConfigStore>()(
         }),
         {
             name: CONFIG_STORE_KEY,
+            // 配置和 API Key 只写磁盘，不回写浏览器 localStorage。
+            // 旧数据在 localStorage（不是 localforage），所以要显式指定回退来源。
+            storage: createJSONStorage(() =>
+                remoteTextStore("app_state", {
+                    keepLegacy: false,
+                    cleanupLegacy: true,
+                    legacy: {
+                        getItem: (key) => window.localStorage.getItem(key),
+                        removeItem: (key) => window.localStorage.removeItem(key),
+                    },
+                }),
+            ),
             partialize: (state) => ({ config: state.config, webdav: state.webdav }),
             merge: (persisted, current) => {
                 const persistedState = (persisted || {}) as Partial<ConfigStore>;
@@ -282,7 +295,10 @@ export const useConfigStore = create<ConfigStore>()(
                         canvasImageCount: config.canvasImageCount || "3",
                         proxyEnabled: Boolean(config.proxyEnabled),
                         proxyUrl: config.proxyUrl || DEFAULT_LOCAL_PROXY_URL,
-                        nodeRegenerateBehavior: config.nodeRegenerateBehavior === "overwrite" ? "overwrite" : "new-node",
+                        nodeRegenerateBehavior:
+                            config.nodeRegenerateBehavior === "overwrite" || config.nodeRegenerateBehavior === "overwrite-stack"
+                                ? config.nodeRegenerateBehavior
+                                : "new-node",
                         autoFocusOnSelect: Boolean(config.autoFocusOnSelect),
                     },
                 };

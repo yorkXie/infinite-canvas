@@ -35,6 +35,10 @@ export type CanvasNodeImage = {
     naturalHeight: number;
     bytes: number;
     mimeType: string;
+    /** 这张图生成完成的时间戳，用于在界面上区分新旧 */
+    createdAt?: number;
+    /** 出这张图时用的模型（含渠道前缀 `channelId::model`） */
+    model?: string;
 };
 
 export type CanvasNodeText = {
