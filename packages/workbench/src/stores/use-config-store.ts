@@ -44,6 +44,7 @@ export type AiConfig = {
     background: string;
     count: string;
     canvasImageCount: string;
+    keepCanvasImageHistory: boolean;
     proxyEnabled: boolean;
     proxyUrl: string;
     autoFocusOnSelect: boolean;
@@ -84,6 +85,7 @@ export const defaultConfig: AiConfig = {
     background: "",
     count: "1",
     canvasImageCount: "3",
+    keepCanvasImageHistory: true,
     proxyEnabled: false,
     proxyUrl: DEFAULT_LOCAL_PROXY_URL,
     autoFocusOnSelect: false,

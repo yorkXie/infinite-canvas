@@ -2,10 +2,11 @@ import { NODE_DEFAULT_SIZE } from "@infinite-canvas/shared/canvas/schema/node-sp
 import { getNodeSpec } from "@workbench/constant/canvas";
 import { nodeSizeFromRatio } from "@workbench/lib/canvas/canvas-node-size";
 import type { AiConfig } from "@workbench/stores/use-config-store";
-import type { UploadedImage } from "@workbench/services/image-storage";
 import type { UploadedFile } from "@workbench/services/file-storage";
 import type { ReferenceImage } from "@workbench/types/image";
 import { CanvasNodeType, type CanvasImageGenerationType, type CanvasMediaReference, type CanvasNodeData, type CanvasNodeMetadata, type CanvasNodeTypeId, type Position } from "@infinite-canvas/shared/canvas/schema/canvas";
+
+export { imageMetadata } from "./node-images";
 
 export function createCanvasNode(type: CanvasNodeTypeId, position: Position, metadata?: CanvasNodeMetadata): CanvasNodeData {
     const spec = getNodeSpec(type);
@@ -23,10 +24,6 @@ export function createCanvasNode(type: CanvasNodeTypeId, position: Position, met
         height: spec.height,
         metadata: { ...spec.metadata, ...metadata },
     };
-}
-
-export function imageMetadata(image: Omit<UploadedImage, "url"> & { url?: string }): CanvasNodeMetadata {
-    return { content: image.url, storageKey: image.storageKey, status: "success", naturalWidth: image.width, naturalHeight: image.height, bytes: image.bytes, mimeType: image.mimeType };
 }
 
 export function videoMetadata(video: UploadedFile): CanvasNodeMetadata {

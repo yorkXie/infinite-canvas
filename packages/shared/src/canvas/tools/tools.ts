@@ -63,7 +63,7 @@ function compactNodes(nodes: CanvasNode[], allNodes: CanvasNode[], detail = fals
                 ...Object.fromEntries(keys.filter((key) => data[key] !== undefined).map((key) => [key, data[key]])),
                 ...(content === undefined ? {} : { content: truncated ? `${content.slice(0, 120)}...` : content, ...(truncated ? { contentTruncated: true } : {}) }),
                 ...(detail && (data.composerContent !== undefined || data.prompt !== undefined) ? { prompt: data.composerContent ?? data.prompt } : {}),
-                ...(detail && Array.isArray(data.images) ? { images: data.images.map((item) => ({ id: item.id, status: item.status, storageKey: item.storageKey, naturalWidth: item.naturalWidth, naturalHeight: item.naturalHeight })) } : {}),
+                ...(detail && Array.isArray(data.images) ? { images: data.images.map((item) => ({ id: item.id, status: item.status, storageKey: item.storageKey, naturalWidth: item.naturalWidth, naturalHeight: item.naturalHeight, model: item.model, createdAt: item.createdAt })) } : {}),
                 ...(detail && Array.isArray(data.texts) ? { texts: data.texts.map((item) => ({ id: item.id, status: item.status, content: item.content })) } : {}),
             },
             ...(node.type === "group" ? { memberIds: members.get(node.id) ?? [] } : {}),

@@ -61,16 +61,16 @@ export function ImageContent({ ctx }: CanvasNodeContentProps) {
     const isBatchRoot = batchCount > 1;
     const primaryImageId = node.metadata?.primaryImageId || images[0]?.id;
     const primaryImage = images.find((image) => image.id === primaryImageId);
-    const primarySource = hasImage ? previewUrlFor(resource.storageKey) : undefined;
+    const primarySource = hasImage ? previewUrlFor(resource.storageKey) ?? resource.url : undefined;
 
     let content;
-    if (!isBatchRoot && node.metadata?.status === "loading") content = (
+    if (!isBatchRoot && !hasImage && node.metadata?.status === "loading") content = (
         <div className="flex h-full w-full flex-col items-center justify-center gap-3" style={{ color: theme.node.activeStroke }}>
             <div className="size-10 animate-spin rounded-full border-2" style={{ borderColor: theme.node.stroke, borderTopColor: theme.node.activeStroke }} />
             <span className="text-[10px] tracking-[0.2em]">生成中</span>
         </div>
     );
-    else if (!isBatchRoot && node.metadata?.status === "error") content = (
+    else if (!isBatchRoot && !hasImage && node.metadata?.status === "error") content = (
         <div className="flex max-w-[260px] flex-col items-center gap-3 px-5 text-center">
             <div className="text-xs leading-5 text-red-300">{node.metadata.errorDetails || "生成失败"}</div>
             <button type="button" className="inline-flex h-8 items-center gap-1.5 rounded-full border px-3 text-xs font-medium transition hover:scale-[1.02]" style={{ background: theme.toolbar.panel, borderColor: theme.toolbar.border, color: theme.node.text }} onClick={(event) => { event.stopPropagation(); onRetryBatchImage(); }} onMouseDown={(event) => event.stopPropagation()}>

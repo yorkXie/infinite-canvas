@@ -40,8 +40,10 @@ export function CanvasNodePromptPanel({ ctx, mode, onImageSettingsOpenChange }: 
     const { node, isGenerating: isRunning } = ctx;
     const nodes = ctx.getNodes();
     const connectedNodes = ctx.getUpstream();
-    const mentionReferences = buildNodeMentionReferences(node, nodes, ctx.getConnections(), ctx.scope);
     const globalConfig = useEffectiveConfig();
+    const references = buildNodeMentionReferences(node, nodes, ctx.getConnections(), ctx.scope);
+    const keepImageHistory = node.type === "image" && globalConfig.keepCanvasImageHistory;
+    const mentionReferences = keepImageHistory ? references.filter((reference) => reference.nodeId !== node.id) : references;
     const openConfigDialog = useConfigStore((state) => state.openConfigDialog);
     const theme = canvasThemes[useThemeStore((state) => state.theme)];
     const fixedRatio = mode === "image" ? getNodeDefinition(node.type)?.useBuiltinPanel?.imageAspectRatio : undefined;
@@ -49,7 +51,7 @@ export function CanvasNodePromptPanel({ ctx, mode, onImageSettingsOpenChange }: 
     // 固定宽高比的节点只保留分辨率选择，尺寸统一按该比例换算，一次生成一张。
     const config = fixedRatio ? { ...nodeConfig, size: computeMediaSize(inferMediaScale(nodeConfig.size) === "auto" ? "2k" : inferMediaScale(nodeConfig.size), fixedRatio), count: "1" } : nodeConfig;
     const hasTextContent = mode === "text" && Boolean(node.metadata?.content);
-    const hasImageContent = mode === "image" && Boolean(node.metadata?.storageKey || node.metadata?.content);
+    const hasImageContent = mode === "image" && !keepImageHistory && Boolean(node.metadata?.storageKey || node.metadata?.content);
     const canUseReferences = mentionReferences.some((reference) => reference.nodeId !== node.id && (mode === "audio" ? reference.kind === "text" : mode !== "text" || reference.kind === "text" || reference.kind === "image"));
     const [prompt, setPrompt] = useState(node.metadata?.composerContent ?? node.metadata?.prompt ?? "");
     const [expanded, setExpanded] = useState(false);

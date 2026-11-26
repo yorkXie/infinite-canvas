@@ -2,6 +2,7 @@ import { useEffect, useRef } from "react";
 import { assertModelTaskTarget, ModelExecutionError, modelAssetUrl, type ModelTask, type ModelTaskTarget } from "@infinite-canvas/shared/model-http";
 import { CanvasNodeType, isCanvasTaskBinding, type CanvasNodeData, type CanvasNodeMetadata, type CanvasTaskBinding } from "@infinite-canvas/shared/canvas/schema/canvas";
 import { imageMetadata, audioMetadata, videoMetadata } from "@workbench/lib/canvas/canvas-node-factory";
+import { completeBatchImage, imageSlot } from "@workbench/lib/canvas/node-images";
 import { fitImageInNode, fitNodeSize } from "@workbench/lib/canvas/canvas-node-size";
 import { uploadMediaFile } from "@workbench/services/file-storage";
 import { models } from "@workbench/services/api/models/runtime";
@@ -36,7 +37,8 @@ async function resultMetadata(session: CanvasSession, task: ModelTask, signal: A
         const asset = Array.isArray(task.result) && task.result[0];
         if (!asset || asset.collection !== "images" || !asset.key) throw new ModelExecutionError("MODEL_RESULT_MISSING");
         const image = await prepareImage(modelAssetUrl(asset), signal);
-        return { ...imageMetadata(image), content: "" };
+        const assetImage = { ...image, url: undefined };
+        return task.target?.slotId ? imageSlot(assetImage, task.target.slotId, task.model, task.updatedAt) : imageMetadata(assetImage, task.model, task.updatedAt);
     }
     const asset = task.result;
     if (!asset || typeof asset === "string" || Array.isArray(asset) || asset.collection !== "media" || !asset.key) throw new ModelExecutionError("MODEL_RESULT_MISSING");
@@ -47,12 +49,17 @@ async function resultMetadata(session: CanvasSession, task: ModelTask, signal: A
 function updateRecovered(node: CanvasNodeData, binding: Binding, patch: CanvasNodeMetadata, keep: boolean) {
     const meta = node.metadata!;
     const tasks = keep ? meta.tasks : meta.tasks?.filter((item) => !sameBinding(item, binding));
-    const images = meta.images?.map((item) => item.id === binding.slotId ? { ...item, ...patch, content: patch.content ?? item.content } : item);
+    const image = binding.slotId && meta.images?.find((slot) => slot.id === binding.slotId);
+    if (image && patch.status === "success") {
+        const updated = completeBatchImage(node, { ...image, ...patch, content: patch.content ?? image.content });
+        return { ...updated, metadata: { ...updated.metadata, tasks, status: tasks?.length ? "loading" as const : "success" as const, errorDetails: undefined } };
+    }
+    const images = binding.slotId ? meta.images?.map((item) => item.id === binding.slotId ? { ...item, ...patch, content: patch.content ?? item.content } : item) : patch.images ?? meta.images;
     const texts = meta.texts?.map((item) => item.id === binding.slotId ? { ...item, ...patch, content: patch.content ?? item.content } : item);
     const slots = images ?? texts ?? [];
     const primaryId = images ? meta.primaryImageId : meta.primaryTextId;
     const selected = slots.find((item) => item.id === primaryId);
-    const primary = selected && selected.status !== "error" ? selected : slots.find((item) => item.status === "success");
+    const primary = images ? images.find((item) => item.status === "success" && (item.storageKey || item.content)) : selected && selected.status !== "error" ? selected : slots.find((item) => item.status === "success");
     const success = patch.status === "success" || slots.some((item) => item.status === "success");
     const status = tasks?.length && !keep ? "loading" : success ? "success" : "error";
     const metadata: CanvasNodeMetadata = { ...meta, ...(!binding.slotId ? patch : {}), images, texts, tasks, status, errorDetails: status === "error" ? patch.errorDetails : undefined };

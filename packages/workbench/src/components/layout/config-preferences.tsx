@@ -79,6 +79,13 @@ export function ConfigPreferences() {
                     onChange={(event) => updateConfig("canvasImageCount", event.target.value)} onBlur={(event) => updateConfig("canvasImageCount", normalizeImageCount(event.target.value))} />
                 <p id={`${sectionId}-count-help`} className="min-h-6 text-sm leading-[22px] text-(--channel-tertiary)">新建画布图片节点时使用；创作页张数可在输入框的参数弹窗里选择。</p>
             </div>
+            <div className="mb-6">
+                <div className="flex min-h-8 items-center justify-between gap-3">
+                    <label htmlFor={`${sectionId}-image-history`} className="text-sm">原地重新生成时保留历史</label>
+                    <SettingsNetworkSwitch id={`${sectionId}-image-history`} checked={config.keepCanvasImageHistory} onCheckedChange={(checked) => updateConfig("keepCanvasImageHistory", checked)} />
+                </div>
+                <p className="text-sm leading-[22px] text-(--channel-tertiary)">开启后，参考图来自节点连线，每轮结果保存在同一个图片组。关闭后，以上一张主图为参考生成新的一批。</p>
+            </div>
         </section>
         <div className="settings-network generation-workspace-controls mb-6 flex min-h-8 items-center justify-between gap-3">
             <label htmlFor={`${sectionId}-focus`} className="text-sm">选中自动居中</label>

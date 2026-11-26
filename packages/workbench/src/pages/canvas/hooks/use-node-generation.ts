@@ -9,7 +9,7 @@ import { bindHostActions } from "@workbench/lib/canvas/host-actions";
 import { commands, nodeGenerate, nodeRetry, nodeStop, nodeOpenPanel, nodeSetTextContent } from "@infinite-canvas/plugin-sdk/builtin";
 import { PluginError, getPluginErrorMessage } from "@infinite-canvas/shared/plugins";
 import { ModelExecutionError } from "@infinite-canvas/shared/model-http";
-import { CanvasNodeType, isCanvasTaskBinding, isWebVideoTaskOwner, type CanvasNodeData, type CanvasNodeMetadata, type CanvasNodeImage, type CanvasNodeText, type CanvasWebVideoTask } from "@infinite-canvas/shared/canvas/schema/canvas";
+import { CanvasNodeType, isCanvasTaskBinding, isWebVideoTaskOwner, type CanvasNodeData, type CanvasNodeMetadata, type CanvasNodeText, type CanvasWebVideoTask } from "@infinite-canvas/shared/canvas/schema/canvas";
 import type { CanvasDocumentOp } from "@infinite-canvas/shared/canvas/ops/apply";
 import type { CanvasSession } from "@workbench/lib/canvas/canvas-session";
 import { prepareImage } from "@workbench/lib/canvas/canvas-session-media";
@@ -28,6 +28,7 @@ import { useAssetStore } from "@workbench/stores/use-asset-store";
 import { getDataUrlByteSize } from "@workbench/lib/image-utils";
 import { fitImageInNode, fitNodeSize } from "@workbench/lib/canvas/canvas-node-size";
 import { audioMetadata, buildAudioGenerationMetadata, buildImageGenerationMetadata, createCanvasNode, imageMetadata, videoMetadata } from "@workbench/lib/canvas/canvas-node-factory";
+import { completeBatchImage, imageSlot, primaryImageFields, savedNodeImages } from "@workbench/lib/canvas/node-images";
 import { buildGenerationConfig, generationReferences, getGenerationCount, hasResumableVideoTask, isGenerationCanceled, resetWebVideoSubmission, resolveMetadataReferences, sourceNodeReferenceImages } from "@workbench/lib/canvas/canvas-generation-helpers";
 import { buildNodeGenerationContext, buildNodeResponseMessages } from "@workbench/components/canvas/canvas-node-generation";
 import type { CanvasNodeGenerationMode } from "@workbench/components/canvas/canvas-node-prompt-panel";
@@ -383,7 +384,7 @@ export function useNodeGeneration(session: CanvasSession, { setDialogNodeId, cap
                         : await requestGeneration({ ...imageConfig, count: "1" }, context.prompt, options).then((items) => items[0]);
                     const applied = await applyImageResult({ nodeId, signal: controller.signal, taskId: options.taskId }, image.dataUrl, (prev, uploaded) => {
                         if (getNodeDefinition(sourceNode.type) !== definition) throw new PluginError("PLUGIN_INACTIVE");
-                        return prev.map((node) => node.id === nodeId && node.type === sourceNode.type ? { ...node, metadata: { ...node.metadata, ...imageMetadata(uploaded), prompt: scene, model: generationConfig.model, status: NODE_STATUS_SUCCESS, errorDetails: undefined } } : node);
+                        return prev.map((node) => node.id === nodeId && node.type === sourceNode.type ? { ...node, metadata: { ...node.metadata, ...imageMetadata(uploaded, generationConfig.model, Date.now()), prompt: scene, model: generationConfig.model, status: NODE_STATUS_SUCCESS, errorDetails: undefined } } : node);
                     }, () => { accepted = true; });
                     if (!applied) throw new PluginError("PLUGIN_INACTIVE");
                     if (panel && getNodeDefinition(sourceNode.type) === definition) panel.close();
@@ -401,7 +402,8 @@ export function useNodeGeneration(session: CanvasSession, { setDialogNodeId, cap
 
             const sourceTextContent = sourceNode.type === CanvasNodeType.Text ? sourceNode.metadata?.content || "" : "";
             const editingTextNode = mode === "text" && Boolean(sourceTextContent);
-            const sourceResource = readNodeResource(sourceNode, "execute", commandContext.scope);
+            const keepImageHistory = mode === "image" && sourceNode.type === CanvasNodeType.Image && effectiveConfig.keepCanvasImageHistory;
+            const sourceResource = keepImageHistory ? null : readNodeResource(sourceNode, "execute", commandContext.scope);
             const generationContext = buildNodeGenerationContext(nodeId, nodesRef.current, connectionsRef.current, editingTextNode ? `请根据要求修改以下文本。\n\n原文：\n${sourceTextContent}\n\n修改要求：\n${prompt}` : prompt, commandContext.scope);
             const webVideoSubmissionId = mode === "video" && !models.tasks ? crypto.randomUUID() : undefined;
             const target = sourceNode.type === mode ? sourceNode : createCanvasNode(mode, {
@@ -436,10 +438,11 @@ export function useNodeGeneration(session: CanvasSession, { setDialogNodeId, cap
                     const generationType = referenceImages.length ? ("edit" as const) : ("generation" as const);
                     const generationMetadata = buildImageGenerationMetadata(generationType, generationConfig, count, referenceImages);
                     const imageIds = Array.from({ length: count }, () => nanoid());
+                    const history = keepImageHistory ? savedNodeImages(sourceNode.metadata) : [];
                     begin({
                         ...generationMetadata,
-                        images: imageIds.map((id) => ({ id, status: NODE_STATUS_LOADING, content: "", naturalWidth: 0, naturalHeight: 0, bytes: 0, mimeType: "" })),
-                        primaryImageId: undefined,
+                        images: [...imageIds.map((id) => ({ id, status: NODE_STATUS_LOADING, content: "", naturalWidth: 0, naturalHeight: 0, bytes: 0, mimeType: "", model: generationConfig.model })), ...history],
+                        primaryImageId: history[0]?.id,
                     });
                     generationRequestsRef.current.get(rootId)!.mediaTarget = { revision: session.getSnapshot().revision, type: CanvasNodeType.Image, originType: sourceNode.type };
                     setDialogNodeId(nodeId);
@@ -463,27 +466,8 @@ export function useNodeGeneration(session: CanvasSession, { setDialogNodeId, cap
                                     ? await requestEdit({ ...generationConfig, count: "1" }, effectivePrompt, referenceImages, options).then((items) => items[0])
                                     : await requestGeneration({ ...generationConfig, count: "1" }, effectivePrompt, options).then((items) => items[0]);
                                 const applied = await applyImageResult({ nodeId: rootId, signal, taskId: options.taskId }, image.dataUrl, (prev, uploaded) => {
-                                    const item: CanvasNodeImage = { id: imageId, status: NODE_STATUS_SUCCESS, content: uploaded.url ?? "", storageKey: uploaded.storageKey, naturalWidth: uploaded.width, naturalHeight: uploaded.height, bytes: uploaded.bytes, mimeType: uploaded.mimeType };
-                                    return prev.map((node) => {
-                                        if (node.id !== rootId || !node.metadata?.images?.some((image) => image.id === imageId)) return node;
-                                        const images = node.metadata?.images?.map((image) => (image.id === imageId ? item : image)) || [];
-                                        if (node.metadata?.primaryImageId) return { ...node, metadata: { ...node.metadata, images } };
-                                        return {
-                                            ...node,
-                                            ...fitImageInNode(node, item.naturalWidth, item.naturalHeight),
-                                            metadata: {
-                                                ...node.metadata,
-                                                content: item.content,
-                                                storageKey: item.storageKey,
-                                                naturalWidth: item.naturalWidth,
-                                                naturalHeight: item.naturalHeight,
-                                                bytes: item.bytes,
-                                                mimeType: item.mimeType,
-                                                images,
-                                                primaryImageId: imageId,
-                                            },
-                                        };
-                                    });
+                                    const item = imageSlot(uploaded, imageId, generationConfig.model, Date.now());
+                                    return prev.map((node) => node.id === rootId ? completeBatchImage(node, item) : node);
                                 }, () => { accepted = true; resultAccepted = true; });
                                 if (!applied) throw new PluginError("PLUGIN_INACTIVE");
                                 signal.throwIfAborted();
@@ -657,6 +641,9 @@ export function useNodeGeneration(session: CanvasSession, { setDialogNodeId, cap
                 return;
             }
             const savedImageMetadata = node.type === CanvasNodeType.Image ? node.metadata : undefined;
+            if (!imageId && savedImageMetadata?.images?.length) {
+                imageId = savedImageMetadata.images.find((image) => image.id === savedImageMetadata.primaryImageId)?.id ?? savedImageMetadata.images[0].id;
+            }
             const hasSavedImageMetadata = Boolean(savedImageMetadata?.generationType);
             const generationConfig =
                 hasSavedImageMetadata && savedImageMetadata
@@ -735,16 +722,7 @@ export function useNodeGeneration(session: CanvasSession, { setDialogNodeId, cap
                     ? await requestEdit(generationConfig, prompt, retryImages, options).then((items) => items[0])
                     : await requestGeneration(generationConfig, prompt, options).then((items) => items[0]);
                 const applied = await applyImageResult({ nodeId: node.id, signal: controller.signal, taskId: options.taskId }, image.dataUrl, (prev, uploadedImage) => {
-                    const retryImage: CanvasNodeImage = {
-                        id: imageId || node.metadata?.primaryImageId || nanoid(),
-                        status: NODE_STATUS_SUCCESS,
-                        content: uploadedImage.url ?? "",
-                        storageKey: uploadedImage.storageKey,
-                        naturalWidth: uploadedImage.width,
-                        naturalHeight: uploadedImage.height,
-                        bytes: uploadedImage.bytes,
-                        mimeType: uploadedImage.mimeType,
-                    };
+                    const retryImage = imageSlot(uploadedImage, imageId || node.metadata?.primaryImageId || nanoid(), generationConfig.model, Date.now());
                     const generationMetadata = savedImageMetadata?.generationType
                         ? {
                               generationType: savedImageMetadata.generationType,
@@ -759,14 +737,16 @@ export function useNodeGeneration(session: CanvasSession, { setDialogNodeId, cap
                     return prev.map((item) => {
                         if (item.id !== node.id || imageId && !item.metadata?.images?.some((image) => image.id === imageId)) return item;
                         const makePrimary = !imageId || item.metadata?.primaryImageId === imageId || !(item.metadata?.storageKey || item.metadata?.content);
+                        const images = item.metadata?.images ?? [];
                         return {
                             ...item,
                             type: CanvasNodeType.Image,
                             ...(makePrimary ? fitImageInNode(item, uploadedImage.width, uploadedImage.height) : {}),
                             metadata: {
                                 ...item.metadata,
-                                ...(makePrimary ? imageMetadata(uploadedImage) : { status: NODE_STATUS_SUCCESS }),
-                                images: item.metadata?.images?.map((current) => (current.id === retryImage.id ? retryImage : current)),
+                                status: NODE_STATUS_SUCCESS,
+                                ...(makePrimary ? primaryImageFields(retryImage) : {}),
+                                images: images.some((entry) => entry.id === retryImage.id) ? images.map((entry) => entry.id === retryImage.id ? retryImage : entry) : [retryImage, ...images],
                                 primaryImageId: makePrimary ? retryImage.id : item.metadata?.primaryImageId,
                                 prompt,
                                 ...generationMetadata,

@@ -15,6 +15,7 @@ export type CanvasImageGenerationType = "generation" | "edit";
 export const nodeImageSchema = z.object({
     id: z.string(), status: nodeStatusSchema, errorDetails: z.string().optional(), content: z.string(),
     storageKey: z.string().optional(), naturalWidth: z.number(), naturalHeight: z.number(), bytes: z.number(), mimeType: z.string(),
+    model: z.string().optional(), createdAt: z.number().optional(),
 });
 export type CanvasNodeImage = z.infer<typeof nodeImageSchema>;
 export const nodeTextSchema = z.object({ id: z.string(), status: nodeStatusSchema, errorDetails: z.string().optional(), content: z.string() });

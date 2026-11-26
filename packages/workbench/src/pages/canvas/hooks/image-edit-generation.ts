@@ -127,7 +127,7 @@ export function createImageEditCommands(generation: ImageEditGeneration) {
                 const applied = await generation.applyImageResult({ nodeId: childId, signal, taskId: options.taskId }, image.dataUrl, (nodes, uploaded) => {
                     checkNodes();
                     signal.throwIfAborted();
-                    return nodes.map((item) => item.id === childId && item.type === CanvasNodeType.Image ? { ...item, ...fitImageInNode(item, uploaded.width, uploaded.height), metadata: { ...item.metadata, ...imageMetadata(uploaded), prompt, ...generationMetadata } } : item);
+                    return nodes.map((item) => item.id === childId && item.type === CanvasNodeType.Image ? { ...item, ...fitImageInNode(item, uploaded.width, uploaded.height), metadata: { ...item.metadata, ...imageMetadata(uploaded, config.model, Date.now()), prompt, ...generationMetadata } } : item);
                 }, () => { resultAccepted = true; });
                 if (!applied) throw new PluginError("PLUGIN_NOT_FOUND");
                 signal.throwIfAborted();
