@@ -2,7 +2,7 @@ import { useEffect, useRef } from "react";
 import { assertModelTaskTarget, ModelExecutionError, modelAssetUrl, type ModelTask, type ModelTaskTarget } from "@infinite-canvas/shared/model-http";
 import { CanvasNodeType, isCanvasTaskBinding, type CanvasNodeData, type CanvasNodeMetadata, type CanvasTaskBinding } from "@infinite-canvas/shared/canvas/schema/canvas";
 import { imageMetadata, audioMetadata, videoMetadata } from "@workbench/lib/canvas/canvas-node-factory";
-import { fitNodeSize } from "@workbench/lib/canvas/canvas-node-size";
+import { fitImageInNode, fitNodeSize } from "@workbench/lib/canvas/canvas-node-size";
 import { uploadMediaFile } from "@workbench/services/file-storage";
 import { models } from "@workbench/services/api/models/runtime";
 import type { ModelRequestOptions } from "@workbench/services/api/models/types";
@@ -69,6 +69,7 @@ function updateRecovered(node: CanvasNodeData, binding: Binding, patch: CanvasNo
         } else if (texts) metadata.primaryTextId = primary.id;
     }
     if (patch.status === "success" && (!binding.slotId || primary?.id === binding.slotId) && patch.naturalWidth && patch.naturalHeight && !meta.freeResize && (node.type === CanvasNodeType.Image || node.type === CanvasNodeType.Video)) {
+        if (node.type === CanvasNodeType.Image) return { ...node, ...fitImageInNode(node, patch.naturalWidth, patch.naturalHeight), metadata };
         const size = fitNodeSize(patch.naturalWidth, patch.naturalHeight, node.width, node.height);
         return { ...node, ...size, position: { x: node.position.x + (node.width - size.width) / 2, y: node.position.y + (node.height - size.height) / 2 }, metadata };
     }

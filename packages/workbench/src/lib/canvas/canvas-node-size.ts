@@ -1,3 +1,15 @@
+import type { ReadonlyCanvasNode } from "@infinite-canvas/plugin-sdk";
+
+export function fitImageInNode(node: ReadonlyCanvasNode, naturalWidth: number, naturalHeight: number) {
+    if (node.metadata?.freeResize || naturalWidth <= 0 || naturalHeight <= 0) {
+        return { width: node.width, height: node.height, position: node.position };
+    }
+    const scale = Math.min(node.width / naturalWidth, node.height / naturalHeight);
+    const width = naturalWidth * scale;
+    const height = naturalHeight * scale;
+    return { width, height, position: { x: node.position.x + (node.width - width) / 2, y: node.position.y + (node.height - height) / 2 } };
+}
+
 export function fitNodeSize(width: number, height: number, maxWidth = 640, maxHeight = 640) {
     const w = Math.max(1, width);
     const h = Math.max(1, height);

@@ -2,7 +2,7 @@ import type { ReadonlyCanvasNode } from "@infinite-canvas/plugin-sdk";
 import { PluginError } from "@infinite-canvas/shared/plugins";
 import { CanvasNodeType, type CanvasNodeData } from "@infinite-canvas/shared/canvas/schema/canvas";
 import type { CanvasDocumentOp } from "@infinite-canvas/shared/canvas/ops/apply";
-import { fitNodeSize } from "@workbench/lib/canvas/canvas-node-size";
+import { fitImageInNode, fitNodeSize } from "@workbench/lib/canvas/canvas-node-size";
 
 type ImageSlot = NonNullable<NonNullable<ReadonlyCanvasNode["metadata"]>["images"]>[number];
 
@@ -23,12 +23,7 @@ function primaryImageMetadata(image?: ImageSlot) {
 export function buildImageSlotSelection(node: ReadonlyCanvasNode, slotId: string): CanvasDocumentOp {
     const image = node.metadata?.images?.find((item) => item.id === slotId);
     if (!image || !image.content && !image.storageKey) throw new PluginError("PLUGIN_NOT_FOUND");
-    const edge = Math.max(node.width, node.height);
-    const size = node.metadata?.freeResize ? { width: node.width, height: node.height } : fitNodeSize(image.naturalWidth, image.naturalHeight, edge, edge);
-    return { type: "update_node", id: node.id, patch: {
-        ...size,
-        position: { x: node.position.x + (node.width - size.width) / 2, y: node.position.y + (node.height - size.height) / 2 },
-    }, metadata: primaryImageMetadata(image) };
+    return { type: "update_node", id: node.id, patch: fitImageInNode(node, image.naturalWidth, image.naturalHeight), metadata: primaryImageMetadata(image) };
 }
 
 export function buildImageSlotRemoval(node: ReadonlyCanvasNode, slotId: string): CanvasDocumentOp {
@@ -39,7 +34,6 @@ export function buildImageSlotRemoval(node: ReadonlyCanvasNode, slotId: string):
     return { type: "update_node", id: node.id, metadata: {
         images,
         tasks: node.metadata?.tasks?.filter((binding) => binding.slotId !== slotId),
-        count: images.length,
         ...(removedPrimary ? primaryImageMetadata(images[0]) : {}),
     } };
 }

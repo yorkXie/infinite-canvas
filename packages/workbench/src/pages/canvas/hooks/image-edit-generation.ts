@@ -11,7 +11,7 @@ import type { CanvasSession } from "@workbench/lib/canvas/canvas-session";
 import { prepareImage } from "@workbench/lib/canvas/canvas-session-media";
 import { buildAngleLabel, buildAnglePrompt, buildGenerationConfig, isGenerationCanceled } from "@workbench/lib/canvas/canvas-generation-helpers";
 import { buildImageGenerationMetadata, imageMetadata } from "@workbench/lib/canvas/canvas-node-factory";
-import { fitNodeSize } from "@workbench/lib/canvas/canvas-node-size";
+import { fitImageInNode } from "@workbench/lib/canvas/canvas-node-size";
 import { readNodeResource } from "@workbench/lib/canvas/node-registry";
 import { executeCommand } from "@workbench/lib/plugins/commands";
 import { pluginRegistry } from "@workbench/lib/plugins/registry";
@@ -127,8 +127,7 @@ export function createImageEditCommands(generation: ImageEditGeneration) {
                 const applied = await generation.applyImageResult({ nodeId: childId, signal, taskId: options.taskId }, image.dataUrl, (nodes, uploaded) => {
                     checkNodes();
                     signal.throwIfAborted();
-                    const imageSize = fitNodeSize(uploaded.width, uploaded.height, size.width, size.height);
-                    return nodes.map((item) => item.id === childId && item.type === CanvasNodeType.Image ? { ...item, ...imageSize, metadata: { ...item.metadata, ...imageMetadata(uploaded), prompt, ...generationMetadata } } : item);
+                    return nodes.map((item) => item.id === childId && item.type === CanvasNodeType.Image ? { ...item, ...fitImageInNode(item, uploaded.width, uploaded.height), metadata: { ...item.metadata, ...imageMetadata(uploaded), prompt, ...generationMetadata } } : item);
                 }, () => { resultAccepted = true; });
                 if (!applied) throw new PluginError("PLUGIN_NOT_FOUND");
                 signal.throwIfAborted();

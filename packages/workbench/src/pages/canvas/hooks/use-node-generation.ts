@@ -10,7 +10,6 @@ import { commands, nodeGenerate, nodeRetry, nodeStop, nodeOpenPanel, nodeSetText
 import { PluginError, getPluginErrorMessage } from "@infinite-canvas/shared/plugins";
 import { ModelExecutionError } from "@infinite-canvas/shared/model-http";
 import { CanvasNodeType, isCanvasTaskBinding, isWebVideoTaskOwner, type CanvasNodeData, type CanvasNodeMetadata, type CanvasNodeImage, type CanvasNodeText, type CanvasWebVideoTask } from "@infinite-canvas/shared/canvas/schema/canvas";
-import { NODE_DEFAULT_SIZE } from "@infinite-canvas/shared/canvas/schema/node-specs";
 import type { CanvasDocumentOp } from "@infinite-canvas/shared/canvas/ops/apply";
 import type { CanvasSession } from "@workbench/lib/canvas/canvas-session";
 import { prepareImage } from "@workbench/lib/canvas/canvas-session-media";
@@ -27,7 +26,7 @@ import type { UploadedFile } from "@workbench/services/file-storage";
 import { useConfigStore, useEffectiveConfig, type AiConfig } from "@workbench/stores/use-config-store";
 import { useAssetStore } from "@workbench/stores/use-asset-store";
 import { getDataUrlByteSize } from "@workbench/lib/image-utils";
-import { fitNodeSize } from "@workbench/lib/canvas/canvas-node-size";
+import { fitImageInNode, fitNodeSize } from "@workbench/lib/canvas/canvas-node-size";
 import { audioMetadata, buildAudioGenerationMetadata, buildImageGenerationMetadata, createCanvasNode, imageMetadata, videoMetadata } from "@workbench/lib/canvas/canvas-node-factory";
 import { buildGenerationConfig, generationReferences, getGenerationCount, hasResumableVideoTask, isGenerationCanceled, resetWebVideoSubmission, resolveMetadataReferences, sourceNodeReferenceImages } from "@workbench/lib/canvas/canvas-generation-helpers";
 import { buildNodeGenerationContext, buildNodeResponseMessages } from "@workbench/components/canvas/canvas-node-generation";
@@ -436,7 +435,6 @@ export function useNodeGeneration(session: CanvasSession, { setDialogNodeId, cap
                     const referenceImages = [...new Map([...sourceReference, ...generationContext.referenceImages].map((image) => [image.id, image])).values()];
                     const generationType = referenceImages.length ? ("edit" as const) : ("generation" as const);
                     const generationMetadata = buildImageGenerationMetadata(generationType, generationConfig, count, referenceImages);
-                    const imageConfig = NODE_DEFAULT_SIZE[CanvasNodeType.Image];
                     const imageIds = Array.from({ length: count }, () => nanoid());
                     begin({
                         ...generationMetadata,
@@ -465,17 +463,14 @@ export function useNodeGeneration(session: CanvasSession, { setDialogNodeId, cap
                                     ? await requestEdit({ ...generationConfig, count: "1" }, effectivePrompt, referenceImages, options).then((items) => items[0])
                                     : await requestGeneration({ ...generationConfig, count: "1" }, effectivePrompt, options).then((items) => items[0]);
                                 const applied = await applyImageResult({ nodeId: rootId, signal, taskId: options.taskId }, image.dataUrl, (prev, uploaded) => {
-                                    const imageSize = fitNodeSize(uploaded.width, uploaded.height, imageConfig.width, imageConfig.height);
                                     const item: CanvasNodeImage = { id: imageId, status: NODE_STATUS_SUCCESS, content: uploaded.url ?? "", storageKey: uploaded.storageKey, naturalWidth: uploaded.width, naturalHeight: uploaded.height, bytes: uploaded.bytes, mimeType: uploaded.mimeType };
                                     return prev.map((node) => {
                                         if (node.id !== rootId || !node.metadata?.images?.some((image) => image.id === imageId)) return node;
                                         const images = node.metadata?.images?.map((image) => (image.id === imageId ? item : image)) || [];
                                         if (node.metadata?.primaryImageId) return { ...node, metadata: { ...node.metadata, images } };
-                                        const center = { x: node.position.x + node.width / 2, y: node.position.y + node.height / 2 };
                                         return {
                                             ...node,
-                                            position: { x: center.x - imageSize.width / 2, y: center.y - imageSize.height / 2 },
-                                            ...imageSize,
+                                            ...fitImageInNode(node, item.naturalWidth, item.naturalHeight),
                                             metadata: {
                                                 ...node.metadata,
                                                 content: item.content,
@@ -740,7 +735,6 @@ export function useNodeGeneration(session: CanvasSession, { setDialogNodeId, cap
                     ? await requestEdit(generationConfig, prompt, retryImages, options).then((items) => items[0])
                     : await requestGeneration(generationConfig, prompt, options).then((items) => items[0]);
                 const applied = await applyImageResult({ nodeId: node.id, signal: controller.signal, taskId: options.taskId }, image.dataUrl, (prev, uploadedImage) => {
-                    const imageConfig = NODE_DEFAULT_SIZE[CanvasNodeType.Image];
                     const retryImage: CanvasNodeImage = {
                         id: imageId || node.metadata?.primaryImageId || nanoid(),
                         status: NODE_STATUS_SUCCESS,
@@ -765,12 +759,10 @@ export function useNodeGeneration(session: CanvasSession, { setDialogNodeId, cap
                     return prev.map((item) => {
                         if (item.id !== node.id || imageId && !item.metadata?.images?.some((image) => image.id === imageId)) return item;
                         const makePrimary = !imageId || item.metadata?.primaryImageId === imageId || !(item.metadata?.storageKey || item.metadata?.content);
-                        const edge = imageId ? Math.max(item.width, item.height) : 0;
-                        const imageSize = imageId && item.metadata?.freeResize ? { width: item.width, height: item.height } : imageId ? fitNodeSize(uploadedImage.width, uploadedImage.height, edge, edge) : fitNodeSize(uploadedImage.width, uploadedImage.height, imageConfig.width, imageConfig.height);
                         return {
                             ...item,
                             type: CanvasNodeType.Image,
-                            ...(makePrimary ? { width: imageSize.width, height: imageSize.height, ...(imageId ? { position: { x: item.position.x + item.width / 2 - imageSize.width / 2, y: item.position.y + item.height / 2 - imageSize.height / 2 } } : {}) } : {}),
+                            ...(makePrimary ? fitImageInNode(item, uploadedImage.width, uploadedImage.height) : {}),
                             metadata: {
                                 ...item.metadata,
                                 ...(makePrimary ? imageMetadata(uploadedImage) : { status: NODE_STATUS_SUCCESS }),
