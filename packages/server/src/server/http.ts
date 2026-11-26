@@ -110,4 +110,8 @@ export function mountEventSockets(http: Server, session: CanvasSession, storage:
             session.openEvents(clientId, client);
         });
     });
+    return () => {
+        sockets.close();
+        for (const client of sockets.clients) client.terminate();
+    };
 }

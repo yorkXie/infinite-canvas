@@ -3,6 +3,7 @@ import path from "node:path";
 import { existsSync } from "node:fs";
 import { homedir } from "node:os";
 import { readFile, writeFile } from "node:fs/promises";
+import { createInterface } from "node:readline";
 import { fileURLToPath } from "node:url";
 import { parseArgs } from "node:util";
 import open from "open";
@@ -20,10 +21,10 @@ export async function runCli(web: LocalWeb, entryUrl: string) {
             : path.join(homedir(), ".infinite-canvas", "workspace");
         const { values, positionals } = parseArgs({
             allowPositionals: true,
-            options: { registry: { type: "string" }, "data-dir": { type: "string", default: defaultDirectory }, port: { type: "string", default: String(DEFAULT_PORT) }, open: { type: "boolean" }, "skip-plugins": { type: "boolean" }, help: { type: "boolean", short: "h" }, debug: { type: "boolean" } },
+            options: { registry: { type: "string" }, "data-dir": { type: "string", default: defaultDirectory }, port: { type: "string", default: String(DEFAULT_PORT) }, open: { type: "boolean" }, "quit-on-q": { type: "boolean" }, "skip-plugins": { type: "boolean" }, help: { type: "boolean", short: "h" }, debug: { type: "boolean" } },
         });
         if (values.help) {
-            console.log("用法：infinite-canvas serve [--data-dir <目录>] [--port <端口>] [--open] [--skip-plugins]\n      infinite-canvas mcp\n      infinite-canvas plugin add|update|remove|enable|disable|list|registry\n\nserve 启动画布并把业务数据保存在目录中；mcp 连接已启动的服务。\n--skip-plugins 本次跳过第三方插件启动，保留数据和启用选择，可在插件设置中逐个重新启用。\n需要 Node.js 22 或更高版本。按 Ctrl+C 停止服务。");
+            console.log("用法：infinite-canvas serve [--data-dir <目录>] [--port <端口>] [--open] [--quit-on-q] [--skip-plugins]\n      infinite-canvas mcp\n      infinite-canvas plugin add|update|remove|enable|disable|list|registry\n\nserve 启动画布并把业务数据保存在目录中；mcp 连接已启动的服务。\n--quit-on-q 允许在启动窗口输入 Q 并回车退出。\n--skip-plugins 本次跳过第三方插件启动，保留数据和启用选择，可在插件设置中逐个重新启用。\n需要 Node.js 22 或更高版本。按 Ctrl+C 停止服务。");
         } else if (positionals[0] === "plugin") {
             await runPluginCommand(positionals.slice(1), path.resolve(values["data-dir"]), values.registry);
         } else if (positionals.length === 1 && positionals[0] === "mcp") {
@@ -54,7 +55,14 @@ export async function runCli(web: LocalWeb, entryUrl: string) {
                 await service.close();
                 throw error;
             }
-            const stop = () => { void service.close().catch(() => { console.error("停止保存时遇到问题，请保留数据目录后重试。"); process.exitCode = 1; }).finally(() => { if (desktop && process.connected) process.disconnect(); }); };
+            let input: ReturnType<typeof createInterface> | undefined;
+            const stop = () => {
+                if (input) {
+                    input.close();
+                    process.stdin.destroy();
+                }
+                void service.close().catch(() => { console.error("停止保存时遇到问题，请保留数据目录后重试。"); process.exitCode = 1; }).finally(() => { if (desktop && process.connected) process.disconnect(); });
+            };
             process.once("SIGINT", stop);
             process.once("SIGTERM", stop);
             if (desktop) {
@@ -65,6 +73,11 @@ export async function runCli(web: LocalWeb, entryUrl: string) {
             }
             console.log(`无限画布\n打开地址：${service.url}\n数据目录：${dataDirectory}\nMCP 地址：${service.url}/mcp`);
             console.log(JSON.stringify({ mcpServers: { "infinite-canvas": mcp } }, null, 2));
+            if (values["quit-on-q"]) {
+                input = createInterface({ input: process.stdin, terminal: false });
+                input.on("line", (line) => { if (line.trim().toLowerCase() === "q") stop(); });
+                console.log("在此窗口输入 Q 并按回车，保存并退出无限画布。");
+            }
             if (values.open) await open(service.url).catch(() => console.error("未能自动打开浏览器，请复制上方地址打开。"));
         } else {
             throw new Error("INVALID_COMMAND");

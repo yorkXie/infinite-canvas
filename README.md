@@ -148,6 +148,8 @@ npx -y @basketikun/infinite-canvas@latest serve --open
 
 ### 本地开发
 
+Windows 安装依赖后，双击仓库根目录的 [启动无限画布.bat](启动无限画布.bat)。浏览器会自动打开本地工作台，默认地址为 `http://127.0.0.1:17371`，作品保存在仓库内的 `infinite-canvas-1.0-data/`。在启动窗口输入 `q` 并回车即可退出。
+
 ```bash
 git clone git@github.com:basketikun/infinite-canvas.git
 cd infinite-canvas

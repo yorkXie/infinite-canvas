@@ -22,9 +22,11 @@ export async function startLocalServer(options: { dataDirectory: string; web: Lo
     const config: ServerConfig = { url: `http://127.0.0.1:${options.port}`, mcp: options.mcp };
     const http = createServer();
     let web: WebHost | undefined;
+    let closeEvents: (() => void) | undefined;
     let stopping: Promise<void> | undefined;
     const close = () => stopping ??= (async () => {
         const closed = new Promise<void>((resolve) => http.close(() => resolve()));
+        closeEvents?.();
         try {
             try {
                 await tasks?.close();
@@ -47,7 +49,7 @@ export async function startLocalServer(options: { dataDirectory: string; web: Lo
         const middleware = "directory" in options.web ? createStaticWeb(options.web.directory) : (web = await options.web.create(http)).middleware;
         const session = new CanvasSession();
         http.on("request", createCanvasHttpApp(config, session, { storage, web: middleware, plugins, tasks }));
-        mountEventSockets(http, session, storage);
+        closeEvents = mountEventSockets(http, session, storage);
         await new Promise<void>((resolve, reject) => {
             http.once("error", reject);
             http.listen(options.port, "127.0.0.1", () => { http.off("error", reject); resolve(); });
