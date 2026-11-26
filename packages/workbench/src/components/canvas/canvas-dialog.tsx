@@ -1,8 +1,8 @@
 import { X } from "lucide-react";
 import { Dialog } from "radix-ui";
-import { useRef, type ReactNode } from "react";
+import { useRef, type CSSProperties, type ReactNode } from "react";
 
-export function CanvasDialog({ title, open, onClose, description, width, top, hideTitle, children }: { title: string; open: boolean; onClose: () => void; description?: string; width?: number; top?: boolean; hideTitle?: boolean; children: ReactNode }) {
+export function CanvasDialog({ title, open, onClose, description, width, top, hideTitle, children }: { title: string; open: boolean; onClose: () => void; description?: string; width?: CSSProperties["width"]; top?: boolean; hideTitle?: boolean; children: ReactNode }) {
     const content = useRef<HTMLDivElement>(null);
     const opener = useRef<HTMLElement | null>(null);
     return <Dialog.Root open={open} onOpenChange={next => { if (!next) onClose(); }}>

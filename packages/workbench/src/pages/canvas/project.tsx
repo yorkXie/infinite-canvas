@@ -209,6 +209,11 @@ function InfiniteCanvasPage({ project, session }: { project: CanvasProject; sess
     const clearConfirmation = useCanvasClearConfirmation(session);
     const [imagePreview, setImagePreview] = useState<ImagePreviewRecord | null>(null);
     const imagePreviewRef = useRef<ImagePreviewRecord | null>(null);
+    const pendingImagePreview = useRef<ImagePreviewRecord | null>(null);
+    const closeImagePreview = useCallback(() => {
+        pendingImagePreview.current?.close();
+        imagePreviewRef.current?.close();
+    }, []);
     const [expandedBatchNodeIds, setExpandedBatchNodeIds] = useState<Set<string>>(new Set());
     const [isNodeDragging, setIsNodeDragging] = useState(false);
     const [isNodeResizing, setIsNodeResizing] = useState(false);
@@ -275,31 +280,55 @@ function InfiniteCanvasPage({ project, session }: { project: CanvasProject; sess
             reads.add(close);
             return { node, media, signal, close };
         };
+        const showPreview = (record: ImagePreviewRecord) => {
+            const previous = imagePreviewRef.current;
+            imagePreviewRef.current = record;
+            setImagePreview({ ...record });
+            if (previous !== record) previous?.close();
+        };
         const contributions: PluginCommand<{ nodeId: string; slotId?: string }, void>[] = [
             { command: nodePreviewImage, title: "预览图片", enabled: (input, context) => resolve(input, context).media.kind === "image", run: async (input, context) => {
                 const node = context.canvas?.getNodes().find((item) => item.id === input.nodeId);
                 const slotId = input.slotId ?? (node?.type === CanvasNodeType.Image ? currentNodeImage(node.metadata)?.id : undefined);
                 const access = capture({ ...input, slotId }, context);
                 if (access.media.kind !== "image") { access.close(); throw new PluginError("PLUGIN_NOT_FOUND"); }
+                const visible = imagePreviewRef.current;
+                const pending = pendingImagePreview.current;
+                if (visible?.url && visible.nodeId === input.nodeId && visible.slotId === slotId) {
+                    pending?.close();
+                    access.close();
+                    return;
+                }
                 let closed = false;
+                let objectUrl: string | undefined;
                 const record: ImagePreviewRecord = { nodeId: input.nodeId, slotId, title: access.node.title || "图片", close: () => {
                     if (closed) return;
                     closed = true;
                     access.signal.removeEventListener("abort", record.close);
                     access.close();
-                    if (record.url) URL.revokeObjectURL(record.url);
-                    if (imagePreviewRef.current === record) { imagePreviewRef.current = null; setImagePreview(null); }
+                    if (objectUrl) URL.revokeObjectURL(objectUrl);
+                    if (pendingImagePreview.current === record) pendingImagePreview.current = null;
+                    if (imagePreviewRef.current === record) {
+                        imagePreviewRef.current = pendingImagePreview.current;
+                        setImagePreview(pendingImagePreview.current);
+                    }
                 } };
-                const previous = imagePreviewRef.current;
-                imagePreviewRef.current = record;
-                previous?.close();
                 access.signal.addEventListener("abort", record.close, { once: true });
-                setImagePreview(record);
+                pendingImagePreview.current = record;
+                // 组内切图时保留正在显示的原图和信息，直到最新选择可以直接绘制。
+                if (!visible?.url || visible.nodeId !== record.nodeId) showPreview(record);
+                pending?.close();
                 try {
                     const blob = await readImageBlob(access.media.storageKey, access.media.url, { signal: access.signal });
                     access.signal.throwIfAborted();
-                    record.url = URL.createObjectURL(blob);
-                    setImagePreview({ ...record });
+                    objectUrl = URL.createObjectURL(blob);
+                    const image = new Image();
+                    image.src = objectUrl;
+                    await image.decode();
+                    access.signal.throwIfAborted();
+                    record.url = objectUrl;
+                    pendingImagePreview.current = null;
+                    showPreview(record);
                 } catch (error) {
                     if (closed) return;
                     record.close();
@@ -317,11 +346,11 @@ function InfiniteCanvasPage({ project, session }: { project: CanvasProject; sess
                 saveAs(blob, `canvas-${media.kind}-${node.id}${input.slotId !== undefined ? `-${input.slotId}` : ""}.${extension}`);
             } finally { access.close(); }
         } })];
-        const release = () => { for (const dispose of disposers) dispose(); for (const close of [...reads]) close(); imagePreviewRef.current?.close(); };
+        const release = () => { for (const dispose of disposers) dispose(); closeImagePreview(); for (const close of [...reads]) close(); };
         try { for (const value of contributions) disposers.push(builtinPlugin.extensions.contribute(commands, { id: value.command.id, value })); }
         catch (error) { release(); throw error; }
         return release;
-    }, [session]);
+    }, [session, closeImagePreview]);
 
     const connectionsRef = useMemo(() => ({ get current() { return session.getSnapshot().connections; } }), [session]);
     const selectedNodeIdsRef = useMemo(() => ({ get current() { return new Set(session.getSnapshot().selection.nodeIds); } }), [session]);
@@ -599,9 +628,9 @@ function InfiniteCanvasPage({ project, session }: { project: CanvasProject; sess
         setHoveredNodeId(null);
         setToolbarNodeId(null);
         setDialogNodeId(null);
-        setImagePreview(null);
+        closeImagePreview();
         setRunningNodeId(null);
-    }, [cancelPendingConnectionCreate, setRunningNodeId]);
+    }, [cancelPendingConnectionCreate, closeImagePreview, setRunningNodeId]);
     useLayoutEffect(() => registerCanvasClear(session, onCleared), [session, onCleared]);
 
     const copySelectedNodes = useCallback(async () => {
@@ -1238,7 +1267,7 @@ function InfiniteCanvasPage({ project, session }: { project: CanvasProject; sess
 
                 {imageEditors}
 
-                <CanvasDialog title="图片详情" width={1100} open={Boolean(imagePreview)} onClose={() => imagePreview?.close()}>
+                <CanvasDialog title="图片详情" width="max(640px, 92vw)" open={Boolean(imagePreview)} onClose={closeImagePreview}>
                     {imagePreview && <CanvasImageDetails
                         node={nodeById.get(imagePreview.nodeId)} preview={imagePreview}
                         onView={(slotId) => executeCommand(nodePreviewImage, { nodeId: imagePreview.nodeId, slotId }, commandOptions)}
