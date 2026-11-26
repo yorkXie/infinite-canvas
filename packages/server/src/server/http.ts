@@ -28,7 +28,7 @@ export function createCanvasHttpApp(config: ServerConfig, session: CanvasSession
         res.setHeader("X-Content-Type-Options", "nosniff");
         const origin = req.headers.origin;
         const sameOrigin = !origin || origin === `http://${req.headers.host}`;
-        const storageRequest = /^\/api\/(?:archive|storage|storage-inspection|assets|models|channels|network|workspace-config|plugins)(?:\/|$)/i.test(req.path);
+        const storageRequest = req.path === "/config" || /^\/api\/(?:archive|storage|storage-inspection|assets|models|channels|network|workspace-config|plugins)(?:\/|$)/i.test(req.path);
         if (storageRequest && !sameOrigin) return void res.sendStatus(403);
         res.setHeader("Vary", "Origin");
         res.setHeader("Access-Control-Allow-Headers", "content-type,x-canvas-client-id,x-canvas-project-id,mcp-protocol-version,mcp-session-id");

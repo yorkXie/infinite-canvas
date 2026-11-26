@@ -8,7 +8,7 @@ import { FsStorage } from "./storage/fs-storage.js";
 import { CanvasSession } from "./canvas/session.js";
 import { createCanvasHttpApp, mountEventSockets } from "./server/http.js";
 import { createStaticWeb } from "./server/web.js";
-import type { ServerConfig } from "./config.js";
+import { saveConfig, type ServerConfig } from "./config.js";
 import { logger } from "./utils/logger.js";
 
 export type WebHost = { middleware: RequestHandler; close: () => Promise<void> };
@@ -55,6 +55,8 @@ export async function startLocalServer(options: { dataDirectory: string; web: Lo
             http.listen(options.port, "127.0.0.1", () => { http.off("error", reject); resolve(); });
         });
         config.url = `http://127.0.0.1:${(http.address() as { port: number }).port}`;
+        await saveConfig(storage.directory, config);
+        logger.debug("本地服务已启动", { url: config.url, directory: storage.directory });
     } catch (error) {
         try { await close(); } finally { throw error; }
     }

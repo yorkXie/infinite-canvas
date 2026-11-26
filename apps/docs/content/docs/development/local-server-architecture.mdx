@@ -214,8 +214,10 @@ server 无法连接时保留 server 模式，提示重试，不自动切到 Brow
 Canvas/
   workspace.json                 工作区 ID 与 schemaVersion
   .canvas.lock                   系统文件锁载体；进程结束自动释放占用
+  canvas-mcp.json                 当前工作区的服务地址
   preferences/<key>.json          应用设置或单张画布的视图
   cache/prompts/<key>.json        按来源保存的提示词缓存
+  logs/                          调试模式日志
   projects/<project-id>.json      画布文档，删除后保留记录
   assets/
     images/<key-hash>.json        图片元信息及原始文件标识

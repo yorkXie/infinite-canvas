@@ -42,13 +42,13 @@ pnpm dev --open
   "mcpServers": {
     "infinite-canvas": {
       "command": "npx",
-      "args": ["-y", "@basketikun/infinite-canvas@latest", "mcp"]
+      "args": ["-y", "@basketikun/infinite-canvas@latest", "mcp", "--data-dir", "/absolute/path/to/Canvas"]
     }
   }
 }
 ```
 
-开发源码时，复制 `pnpm dev` 控制台输出的完整 JSON 配置；命令使用启动服务时的 Node 路径，参数包含本地 tsx 与 `src/dev.ts` 的绝对路径，可从任意工作目录启动。安装版控制台输出已安装入口的绝对路径。各客户端仅需接入标准 MCP，无需为 Codex、Claude Code 或 WorkBuddy 实现转发适配器。
+开发源码时，复制 `pnpm dev` 控制台输出的完整 JSON 配置；命令使用启动服务时的 Node 路径，参数包含本地 tsx、`src/dev.ts` 和所选工作区的绝对路径，可从任意工作目录启动。安装版控制台输出已安装入口的绝对路径。各客户端仅需接入标准 MCP，无需为 Codex、Claude Code 或 WorkBuddy 实现转发适配器。
 
 Codex / ZCode 插件启动本地服务后打开 `<打开地址>/canvas?mode=new`。
 
@@ -63,7 +63,7 @@ Codex / ZCode 插件启动本地服务后打开 `<打开地址>/canvas?mode=new`
 - 结果必须由目标网页回传。生成提交与生成完成分开处理，使用 `generation_get_status` 查询实际状态。工作台返回的 `taskId` 定位保存的生成记录。批量生图用一个编号查询整批，结果中的 `taskIds` 列出关联的本地调用。CLI 和 Desktop 重开同一工作区后可重新连接并查询。
 - 工具失败返回固定 `code` 和中文 `message`，区分目标断开、项目切换、节点不存在、组成员无效等情况；详细诊断留在网页控制台与本地服务，不能透传内部错误原文。MCP 清单为读取工具标记 `readOnlyHint`。
 
-本地服务只监听回环地址，网页连接与工具请求只接受同源页面。服务地址保存到 `~/.infinite-canvas/canvas-mcp.json`，普通启动写入，stdio MCP 读取；文件只保存服务地址，不保存模型密钥、聊天记录或 Agent 工作目录。
+本地服务只监听回环地址，网页连接与工具请求只接受同源页面。服务地址保存到所选工作区根目录的 `canvas-mcp.json`，普通启动写入，stdio MCP 读取；文件只保存服务地址，不保存模型密钥、聊天记录或 Agent 工作目录。
 
 ## 精简读取与操作回执
 

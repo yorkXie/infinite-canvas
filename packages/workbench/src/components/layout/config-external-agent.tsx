@@ -1,4 +1,5 @@
-import { useEffect, useState } from "react";
+import { useQuery } from "@tanstack/react-query";
+import { requestStorage } from "@workbench/lib/storage-request";
 import { Button } from "@infinite-canvas/plugin-sdk/ui/button";
 import { Copy } from "lucide-react";
 
@@ -9,16 +10,20 @@ import { useCanvasMcpStore } from "@workbench/stores/use-canvas-mcp-store";
 import "./config-network.css";
 
 const agentCommand = "npx -y @basketikun/infinite-canvas@latest serve";
-const npxMcp = { command: "npx", args: ["-y", "@basketikun/infinite-canvas@latest", "mcp"] };
 
 export function ConfigExternalAgent() {
     const copyText = useCopyText();
     const connected = useCanvasMcpStore((state) => state.connected);
     const enabled = useCanvasMcpStore((state) => state.enabled);
     const error = useCanvasMcpStore((state) => state.error);
-    const [mcp, setMcp] = useState(npxMcp);
-    useEffect(() => { if (storage.kind === "server") void fetch("/config").then((response) => response.json()).then((config) => { if (config.mcp) setMcp(config.mcp); }); }, []);
-    const mcpConfig = JSON.stringify({ mcpServers: { "infinite-canvas": mcp } }, null, 2);
+    const { data: mcpConfig = "", isError } = useQuery({
+        queryKey: ["local-mcp-config"], enabled: storage.kind === "server",
+        queryFn: async () => {
+            const { mcp } = await (await requestStorage("/config")).json();
+            if (!mcp) throw new Error("MCP_WORKSPACE_UNAVAILABLE");
+            return JSON.stringify({ mcpServers: { "infinite-canvas": mcp } }, null, 2);
+        },
+    });
     const status = connected ? "Agent 连接已就绪" : enabled && !error ? "正在连接…" : "尚未连接";
 
     if (storage.kind !== "server") return (
@@ -41,7 +46,7 @@ export function ConfigExternalAgent() {
                     {status}
                 </p>
                 <div className="flex gap-1">
-                    <Button type="button" variant="ghost" size="sm" onClick={() => copyText(`请帮我连接当前本地画布的 MCP。画布地址：${window.location.origin}。本地程序已经启动，请复用它，不再启动第二个服务。使用以下 mcpServers 配置，保留已有 MCP 配置：\n${mcpConfig}\n完成后读取 canvas_get_state 确认目标网页，后续持续传入 clientId 和 projectId。`, "配置说明已复制，粘贴发送给你的 AI")}><Copy aria-hidden className="size-4" />复制配置说明</Button>
+                    <Button type="button" variant="ghost" size="sm" disabled={!mcpConfig} onClick={() => copyText(`请帮我连接当前本地画布的 MCP。画布地址：${window.location.origin}。本地程序已经启动，请复用它，不再启动第二个服务。使用以下 mcpServers 配置，保留已有 MCP 配置：\n${mcpConfig}\n完成后读取 canvas_get_state 确认目标网页，后续持续传入 clientId 和 projectId。`, "配置说明已复制，粘贴发送给你的 AI")}><Copy aria-hidden className="size-4" />复制配置说明</Button>
                     <Button type="button" variant="ghost" size="sm" aria-label={connected ? "断开连接" : "连接"} onClick={() => connected ? useCanvasMcpStore.getState().disconnect() : useCanvasMcpStore.getState().connect()}>{connected ? "断开连接" : "连 接"}</Button>
                 </div>
             </div>
@@ -50,9 +55,9 @@ export function ConfigExternalAgent() {
             <section className="flex min-w-0 flex-col gap-2" aria-labelledby="local-agent-manual-setup">
                 <div className="flex items-center justify-between gap-2">
                     <h3 id="local-agent-manual-setup" className="text-sm font-semibold">手动配置</h3>
-                    <Button type="button" variant="ghost" size="xs" onClick={() => void copyText(mcpConfig, "MCP 配置已复制")}><Copy aria-hidden className="size-3.5" />复制 JSON</Button>
+                    <Button type="button" variant="ghost" size="xs" disabled={!mcpConfig} onClick={() => void copyText(mcpConfig, "MCP 配置已复制")}><Copy aria-hidden className="size-3.5" />复制 JSON</Button>
                 </div>
-                <pre className="whitespace-pre-wrap break-all text-xs leading-5">{mcpConfig}</pre>
+                <pre className="whitespace-pre-wrap break-all text-xs leading-5">{mcpConfig || (isError ? "读取失败，请使用启动窗口显示的 MCP 配置。" : "正在读取工作区的 MCP 配置…")}</pre>
                 <p className="text-muted-foreground">需要本机安装 Node.js 22 或更高版本。源码开发时，也可使用启动终端输出的配置。</p>
             </section>
         </div>

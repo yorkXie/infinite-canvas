@@ -1,5 +1,4 @@
 import fs from "node:fs";
-import os from "node:os";
 import path from "node:path";
 import {inspect} from "node:util";
 
@@ -9,22 +8,23 @@ import {formatDateForFilename} from "./date.js";
 
 /** 管理 Canvas Agent 的终端与文件 Debug 日志。 */
 export class Logger {
-    readonly enabled = process.argv.includes("--debug");
-    readonly filePath = this.enabled ? path.join(os.homedir(), ".infinite-canvas", "logs", `infinite-canvas-${formatDateForFilename()}.log`) : "";
     private readonly logger: WinstonLogger;
 
     /** 普通模式输出 Info 以上日志，Debug 模式额外输出 Debug 并写入文件。 */
     constructor() {
         const line = format.printf(({level, message, timestamp, details}) => `${timestamp} ${level.toUpperCase()} ${message}${formatDetails(details)}`);
         const output = format.combine(format.timestamp({format: "YYYY-MM-DD HH:mm:ss"}), line);
-        if (this.enabled) fs.mkdirSync(path.dirname(this.filePath), {recursive: true});
         this.logger = winston.createLogger({
-            level: this.enabled ? "debug" : "info",
-            transports: [
-                new transports.Console({format: output, stderrLevels: ["error"]}),
-                ...(this.enabled ? [new transports.File({filename: this.filePath, format: output})] : []),
-            ],
+            level: "info", format: output,
+            transports: [new transports.Console({stderrLevels: ["error"]})],
         });
+    }
+
+    enableDebug(dataDirectory: string) {
+        const directory = path.join(dataDirectory, "logs");
+        fs.mkdirSync(directory, { recursive: true, mode: 0o700 });
+        this.logger.level = "debug";
+        this.logger.add(new transports.File({ filename: path.join(directory, `infinite-canvas-${formatDateForFilename()}.log`) }));
     }
 
     /** 输出 Debug 级别日志。 */

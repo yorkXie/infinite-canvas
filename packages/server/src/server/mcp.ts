@@ -46,8 +46,8 @@ export function createCanvasMcpServer(callTool: CallTool, listPlugins: (signal: 
     return server;
 }
 
-export async function startMcpServer() {
-    const config = loadConfig(true);
+export async function startMcpServer(dataDirectory: string) {
+    const config = await loadConfig(dataDirectory);
     async function request(path: string, input: unknown, signal?: AbortSignal) {
         const response = await fetch(new URL(path, config.url), {
             method: "POST", signal, headers: { "content-type": "application/json" },
