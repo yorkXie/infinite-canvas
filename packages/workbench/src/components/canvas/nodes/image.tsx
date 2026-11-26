@@ -172,9 +172,8 @@ function ExpandedImageCard({ node, image, index, scope, onView, onSetPrimary, on
             onMouseDown={(event) => event.stopPropagation()}
             onPointerDown={(event) => event.stopPropagation()}
             onDoubleClick={(event) => {
-                if (!hasImage || (event.target instanceof Element && event.target.closest("button"))) return;
                 event.stopPropagation();
-                onView();
+                if (hasImage && !(event.target instanceof Element && event.target.closest("button"))) onView();
             }}
         >
             {source && source !== failedPreview ? <img src={source} alt={node.title} draggable={false} onError={() => setFailedPreview(source)} className="pointer-events-none h-full w-full select-none object-contain" /> : hasImage ? <div className="grid size-full place-items-center" title="双击查看图片"><ImageIcon className="size-6 opacity-40" /></div> : <ImageSlotStatus image={image} />}

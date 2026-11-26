@@ -1,5 +1,5 @@
 import { PluginError } from "@infinite-canvas/shared/plugins";
-import type { CanvasGenerationRequest } from "@workbench/lib/canvas/node-generation-state";
+import { activeGenerationRequests, currentGenerationRequest, type CanvasGenerationRequest } from "@workbench/lib/canvas/node-generation-state";
 
 /** 生成命令会包装其内部观察的中止原因。只忽略用户主动停止的这一种。 */
 export function isNodeGenerationStopped(error: unknown) {
@@ -10,7 +10,7 @@ export type NodeStopConfirmation = { accept: () => Promise<void>; cancel: () => 
 
 export async function confirmNodeStop(present: (confirmation: NodeStopConfirmation) => () => void, signal: AbortSignal, requests: ReadonlyMap<string, CanvasGenerationRequest>, nodeId: string, stop: (controllers: ReadonlySet<AbortController>) => Promise<void>) {
     signal.throwIfAborted();
-    const original = [...requests.values()].filter((item) => !item.controller.signal.aborted && [item.runningNodeId, item.targetNodeId, item.originNodeId].includes(nodeId));
+    const original = activeGenerationRequests(requests).filter((item) => !item.controller.signal.aborted && [item.runningNodeId, item.targetNodeId, item.originNodeId].includes(nodeId));
     if (!original.length) return;
 
     const receipt = Promise.withResolvers<void>();
@@ -21,7 +21,7 @@ export async function confirmNodeStop(present: (confirmation: NodeStopConfirmati
             decided = true;
             try {
                 signal.throwIfAborted();
-                const controllers = new Set(original.filter((item) => requests.get(item.targetNodeId) === item && !item.controller.signal.aborted).map((item) => item.controller));
+                const controllers = new Set(original.filter((item) => currentGenerationRequest(requests, item.targetNodeId, item.slotId) === item && !item.controller.signal.aborted).map((item) => item.controller));
                 if (controllers.size) await stop(controllers);
                 signal.throwIfAborted();
                 receipt.resolve();

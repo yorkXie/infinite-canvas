@@ -9,7 +9,7 @@ import { bindHostActions } from "@workbench/lib/canvas/host-actions";
 import { commands, nodeGenerate, nodeRetry, nodeStop, nodeOpenPanel, nodeSetTextContent } from "@infinite-canvas/plugin-sdk/builtin";
 import { PluginError, getPluginErrorMessage } from "@infinite-canvas/shared/plugins";
 import { ModelExecutionError } from "@infinite-canvas/shared/model-http";
-import { CanvasNodeType, isCanvasTaskBinding, isWebVideoTaskOwner, type CanvasNodeData, type CanvasNodeMetadata, type CanvasNodeText, type CanvasWebVideoTask } from "@infinite-canvas/shared/canvas/schema/canvas";
+import { CanvasNodeType, isCanvasTaskBinding, isWebVideoTaskOwner, type CanvasNodeData, type CanvasNodeMetadata, type CanvasNodeText, type CanvasTaskBinding, type CanvasWebVideoTask } from "@infinite-canvas/shared/canvas/schema/canvas";
 import type { CanvasDocumentOp } from "@infinite-canvas/shared/canvas/ops/apply";
 import type { CanvasSession } from "@workbench/lib/canvas/canvas-session";
 import { prepareImage } from "@workbench/lib/canvas/canvas-session-media";
@@ -28,12 +28,12 @@ import { useAssetStore } from "@workbench/stores/use-asset-store";
 import { getDataUrlByteSize } from "@workbench/lib/image-utils";
 import { fitNodeSize } from "@workbench/lib/canvas/canvas-node-size";
 import { audioMetadata, buildAudioGenerationMetadata, buildImageGenerationMetadata, createCanvasNode, imageMetadata, videoMetadata } from "@workbench/lib/canvas/canvas-node-factory";
-import { completeBatchImage, imageSlot, savedNodeImages } from "@workbench/lib/canvas/node-images";
+import { completeBatchImage, imageSlot, primaryImageFields, savedNodeImages } from "@workbench/lib/canvas/node-images";
 import { buildGenerationConfig, generationReferences, getGenerationCount, hasResumableVideoTask, isGenerationCanceled, resetWebVideoSubmission, resolveMetadataReferences, sourceNodeReferenceImages } from "@workbench/lib/canvas/canvas-generation-helpers";
 import { buildNodeGenerationContext, buildNodeResponseMessages } from "@workbench/components/canvas/canvas-node-generation";
 import type { CanvasNodeGenerationMode } from "@workbench/components/canvas/canvas-node-prompt-panel";
 import type { ReferenceVideo, ReferenceAudio } from "@workbench/types/media";
-import { resolveNodeRetryTarget, setTextNodeContent, startNodeGenerationRequest, stopNodeGenerationRequests, type CanvasGenerationRequest } from "@workbench/lib/canvas/node-generation-state";
+import { activeGenerationRequests, currentGenerationRequest, releaseGenerationRequest, resolveNodeRetryTarget, setTextNodeContent, startNodeGenerationRequest, stopNodeGenerationRequests, type CanvasGenerationRequest } from "@workbench/lib/canvas/node-generation-state";
 import { confirmNodeStop, type NodeStopConfirmation } from "@workbench/lib/canvas/confirm-node-stop";
 import { readWebVideoTaskResult, sameWebVideoTask, saveWebVideoTask } from "./web-video-task";
 import { createImageEditCommands, type ApplyCanvasImageResult } from "./image-edit-generation";
@@ -95,7 +95,7 @@ export function useNodeGeneration(session: CanvasSession, { setDialogNodeId, cap
     }, [session]);
     const generationRequestsRef = useRef(new Map<string, CanvasGenerationRequest>());
     const cancelTask = useCallback((signal: AbortSignal) => {
-        for (const request of generationRequestsRef.current.values()) if (request.controller.signal === signal) request.controller.abort();
+        for (const request of activeGenerationRequests(generationRequestsRef.current)) if (request.controller.signal === signal) request.controller.abort();
     }, []);
     const task = useCanvasTasks(session, cancelTask);
     const applyResult = useCallback((nodeId: string, kind: "image" | "video" | "text" | "audio", signal: AbortSignal, update: (nodes: CanvasNodeData[]) => CanvasNodeData[], taskId?: string) => {
@@ -135,7 +135,7 @@ export function useNodeGeneration(session: CanvasSession, { setDialogNodeId, cap
     }, [projectId]);
     useEffect(() => session.subscribe(() => {
         const nodes = new Map(session.getSnapshot().nodes.map((node) => [node.id, node]));
-        for (const request of generationRequestsRef.current.values()) {
+        for (const request of activeGenerationRequests(generationRequestsRef.current)) {
             const node = nodes.get(request.targetNodeId);
             const target = request.mediaTarget;
             if (!node || target && (node.type !== target.type || target.originType !== undefined && nodes.get(request.originNodeId)?.type !== target.originType || target.slotId !== undefined && !node.metadata?.images?.some((image) => image.id === target.slotId)) ||
@@ -144,9 +144,11 @@ export function useNodeGeneration(session: CanvasSession, { setDialogNodeId, cap
     }), [session]);
     useEffect(() => session.on("document.committed", (event) => {
         if (event.operation === "transact" && !event.removedNodeIds?.length) return;
-        for (const request of generationRequestsRef.current.values()) {
-            if (event.operation === "undo" || event.operation === "redo") request.controller.abort();
-            else if (request.mediaTarget && request.mediaTarget.revision < event.revision && event.removedNodeIds?.some((id) => id === request.targetNodeId || id === request.originNodeId)) {
+        for (const request of activeGenerationRequests(generationRequestsRef.current)) {
+            if (event.operation === "undo" || event.operation === "redo") {
+                // 恢复中的图片按实际任务绑定取消，可以继续接收未被撤销的槽位。
+                if (request.mediaTarget?.type !== CanvasNodeType.Image || !task.isRestoring(request.controller.signal)) request.controller.abort();
+            } else if (request.mediaTarget && request.mediaTarget.revision < event.revision && event.removedNodeIds?.some((id) => id === request.targetNodeId || id === request.originNodeId)) {
                 request.controller.abort(new PluginError("PLUGIN_INACTIVE"));
             }
         }
@@ -155,14 +157,50 @@ export function useNodeGeneration(session: CanvasSession, { setDialogNodeId, cap
 
     const startGenerationRequest = useMemo(() => startNodeGenerationRequest.bind(null, generationRequestsRef.current, session.signal), [session]);
 
-    const finishGenerationRequest = useCallback((targetNodeId: string, controller: AbortController) => {
+    const finishGenerationRequest = useCallback((targetNodeId: string, controller: AbortController, slotId?: string) => {
         task.finish(targetNodeId, controller.signal);
-        const request = generationRequestsRef.current.get(targetNodeId);
+        const request = currentGenerationRequest(generationRequestsRef.current, targetNodeId, slotId);
         if (request?.controller !== controller || controller.signal.reason?.message === "task-stop") return false;
-        request.release();
-        generationRequestsRef.current.delete(targetNodeId);
+        releaseGenerationRequest(generationRequestsRef.current, request);
         return true;
-    }, []);
+    }, [task.finish]);
+
+    const observeSavedTasks = useCallback(async (node: CanvasNodeData, bindings: CanvasTaskBinding[], resume = false, signal?: AbortSignal) => {
+        const observe = async (owned: CanvasTaskBinding[], slotId?: string) => {
+            const controller = startGenerationRequest(node.id, owned[0].sourceId, node.id, new AbortController(), signal, slotId);
+            if (node.type === CanvasNodeType.Image) {
+                currentGenerationRequest(generationRequestsRef.current, node.id, slotId)!.mediaTarget = { type: node.type, revision: session.getSnapshot().revision, slotId };
+            }
+            setRunningNodeId(node.id);
+            try {
+                const applied = await task.restore({ ...node, metadata: { ...node.metadata, tasks: owned } }, controller, resume);
+                controller.signal.throwIfAborted();
+                return applied;
+            } finally {
+                if (finishGenerationRequest(node.id, controller, slotId) && !generationRequestsRef.current.has(node.id)) setRunningNodeId((current) => current === node.id ? null : current);
+            }
+        };
+        if (node.type !== CanvasNodeType.Image || bindings.some((binding) => binding.slotId === undefined)) return observe(bindings);
+        const results = await Promise.all(bindings.map((binding) => observe([binding], binding.slotId)));
+        return results.some(Boolean);
+    }, [finishGenerationRequest, session, startGenerationRequest, task.restore]);
+
+    const recoverInterruptedImages = useCallback((nodeId: string, controller: AbortController, slotId?: string) => {
+        if (!models.tasks || session.signal.aborted) return;
+        const request = currentGenerationRequest(generationRequestsRef.current, nodeId, slotId);
+        if (request?.controller !== controller || request.mediaTarget?.type !== CanvasNodeType.Image) return;
+        const nodes = session.getSnapshot().nodes;
+        const node = nodes.find((item) => item.id === nodeId);
+        if (node?.type !== CanvasNodeType.Image || !nodes.some((item) => item.id === request.originNodeId)) return;
+        // 提交已落盘而页面观察先结束时，由当前画布接回原任务。已替换或删除的槽位不接回。
+        const bindings = node.metadata?.tasks?.filter((binding) => {
+            if (slotId !== undefined && binding.slotId !== slotId) return false;
+            if (binding.sourceId !== request.originNodeId || !isCanvasTaskBinding(projectId, node, binding)) return false;
+            return binding.slotId === undefined ? node.metadata?.status === "loading"
+                : node.metadata?.images?.some((image) => image.id === binding.slotId && image.status === "loading");
+        });
+        if (bindings?.length && finishGenerationRequest(nodeId, controller, slotId)) return observeSavedTasks(node, bindings);
+    }, [finishGenerationRequest, observeSavedTasks, projectId, session]);
 
     const releaseWebSubmission = useCallback((nodeId: string, submissionId: string) => {
         if (session.signal.aborted || session.getSnapshot().nodes.find((node) => node.id === nodeId)?.metadata?.webVideoSubmissionId !== submissionId) return;
@@ -280,10 +318,22 @@ export function useNodeGeneration(session: CanvasSession, { setDialogNodeId, cap
         let historyChanged = false;
         const unsubscribe = session.on("document.committed", ({ operation }) => { if (operation === "undo" || operation === "redo") historyChanged = true; });
         const stop = async (nodeId: string, signal: AbortSignal) => {
-            const request = generationRequestsRef.current.get(nodeId);
+            const request = activeGenerationRequests(generationRequestsRef.current).find((item) => item.targetNodeId === nodeId && item.controller.signal === signal);
             const binding = request?.webVideoTask;
             if (!binding) {
-                if (!request?.webVideoSubmissionId || request.controller.signal !== signal) return task.stop(nodeId, signal);
+                if (!request?.webVideoSubmissionId) {
+                    const stopped = await task.stop(nodeId, signal);
+                    if (stopped && request?.slotId !== undefined && !session.signal.aborted && !historyChanged &&
+                        currentGenerationRequest(generationRequestsRef.current, nodeId, request.slotId) === request) {
+                        setGenerationNodes((nodes) => nodes.map((node) => {
+                            if (node.id !== nodeId || !node.metadata?.images?.some((image) => image.id === request.slotId && image.status === "loading")) return node;
+                            const images = node.metadata.images.map((image) => image.id === request.slotId ? { ...image, status: NODE_STATUS_ERROR, errorDetails: "请求已取消" } : image);
+                            const status = images.some((image) => image.status === "loading") ? NODE_STATUS_LOADING : images.some((image) => image.status === "success") ? NODE_STATUS_SUCCESS : NODE_STATUS_IDLE;
+                            return { ...node, metadata: { ...node.metadata, images, status } };
+                        }));
+                    }
+                    return stopped;
+                }
                 const submissionId = request.webVideoSubmissionId;
                 releaseWebSubmission(nodeId, submissionId);
                 await session.flush();
@@ -317,11 +367,9 @@ export function useNodeGeneration(session: CanvasSession, { setDialogNodeId, cap
         if (models.tasks) {
             for (const node of nodesRef.current) {
                 const bindings = node.metadata?.tasks?.filter((binding) => isCanvasTaskBinding(projectId, node, binding));
-                if (!bindings?.length) continue;
-                const controller = startGenerationRequest(node.id, bindings[0].sourceId);
-                void task.restore({ ...node, metadata: { ...node.metadata, tasks: bindings } }, controller).catch((error) => {
-                    if (!controller.signal.aborted) toast.error(generationErrorMessage(error), workbenchMessageOptions.error);
-                }).finally(() => finishGenerationRequest(node.id, controller));
+                if (bindings?.length) void observeSavedTasks(node, bindings).catch((error) => {
+                    if (!session.signal.aborted && !isGenerationCanceled(error)) toast.error(generationErrorMessage(error), workbenchMessageOptions.error);
+                });
             }
             return;
         }
@@ -442,7 +490,7 @@ export function useNodeGeneration(session: CanvasSession, { setDialogNodeId, cap
                     begin({
                         ...generationMetadata,
                         images: [...imageIds.map((id) => ({ id, status: NODE_STATUS_LOADING, content: "", naturalWidth: 0, naturalHeight: 0, bytes: 0, mimeType: "", model: generationConfig.model })), ...history],
-                        primaryImageId: history[0]?.id,
+                        ...primaryImageFields(),
                     });
                     generationRequestsRef.current.get(rootId)!.mediaTarget = { revision: session.getSnapshot().revision, type: CanvasNodeType.Image, originType: sourceNode.type };
                     setDialogNodeId(nodeId);
@@ -483,6 +531,12 @@ export function useNodeGeneration(session: CanvasSession, { setDialogNodeId, cap
                             return false;
                         }),
                     );
+                    const recovery = recoverInterruptedImages(rootId, controller);
+                    if (recovery) {
+                        if (!await recovery && !resultAccepted) throw new PluginError("PLUGIN_INACTIVE");
+                        if (hasFailure) toast.error("部分图片生成失败", workbenchMessageOptions.error);
+                        return;
+                    }
                     controller.signal.throwIfAborted();
                     const failedReceipt = completed.find((result) => result.status === "rejected");
                     if (!resultAccepted && !hasFailure) throw failedReceipt?.reason ?? new PluginError("PLUGIN_INACTIVE");
@@ -615,7 +669,7 @@ export function useNodeGeneration(session: CanvasSession, { setDialogNodeId, cap
                 if (finishGenerationRequest(nodeId, controller)) setRunningNodeId((current) => current === nodeId ? null : current);
             }
         },
-        [applyImageResult, capturePanel, completeAudioNodeTask, completeVideoNodeTask, effectiveConfig, finishGenerationRequest, isAiConfigReady, openConfigDialog, startGenerationRequest],
+        [applyImageResult, capturePanel, completeAudioNodeTask, completeVideoNodeTask, effectiveConfig, finishGenerationRequest, isAiConfigReady, openConfigDialog, recoverInterruptedImages, startGenerationRequest],
     );
 
     const handleRetryNode = useCallback(
@@ -623,13 +677,8 @@ export function useNodeGeneration(session: CanvasSession, { setDialogNodeId, cap
             const commitCanvas = (ops: CanvasDocumentOp[]) => commitHostTransaction(commandContext.canvas!, ops);
             const retryTarget = resolveNodeRetryTarget(projectId, node, imageId, Boolean(models.tasks));
             if (retryTarget.kind === "tasks") {
-                if (generationRequestsRef.current.has(node.id)) throw new PluginError("PLUGIN_INACTIVE");
-                const controller = startGenerationRequest(node.id, retryTarget.bindings[0].sourceId, node.id, new AbortController(), commandContext.signal);
-                try {
-                    const restored = await task.restore({ ...node, metadata: { ...node.metadata, tasks: retryTarget.bindings } }, controller, true);
-                    controller.signal.throwIfAborted();
-                    if (!restored) throw new PluginError("PLUGIN_OPERATION_FAILED");
-                } finally { finishGenerationRequest(node.id, controller); }
+                const restored = await observeSavedTasks(node, retryTarget.bindings, true, commandContext.signal);
+                if (!restored) throw new PluginError("PLUGIN_OPERATION_FAILED");
                 return;
             }
             if (retryTarget.kind === "video") {
@@ -672,9 +721,10 @@ export function useNodeGeneration(session: CanvasSession, { setDialogNodeId, cap
             const sourceResource = useReferenceImages && !hasSavedImageMetadata ? readNodeResource(node, "execute", commandContext.scope) : null;
             setRunningNodeId(node.id);
             const webVideoSubmissionId = node.type === CanvasNodeType.Video && !models.tasks ? crypto.randomUUID() : undefined;
-            const controller = startGenerationRequest(node.id, node.id, node.id, new AbortController(), AbortSignal.any([commandContext.signal, ...(context ? [context.signal] : []), ...(sourceResource ? [sourceResource.signal] : [])]));
+            const retrySlot = node.type === CanvasNodeType.Image ? imageId : undefined;
+            const controller = startGenerationRequest(node.id, node.id, node.id, new AbortController(), AbortSignal.any([commandContext.signal, ...(context ? [context.signal] : []), ...(sourceResource ? [sourceResource.signal] : [])]), retrySlot);
             if (node.type !== CanvasNodeType.Text && node.type !== CanvasNodeType.Audio && node.type !== CanvasNodeType.Video) {
-                generationRequestsRef.current.get(node.id)!.mediaTarget = { revision: session.getSnapshot().revision, type: node.type, originType: node.type, slotId: imageId };
+                currentGenerationRequest(generationRequestsRef.current, node.id, retrySlot)!.mediaTarget = { revision: session.getSnapshot().revision, type: node.type, originType: node.type, slotId: imageId };
             }
 
             let resultAccepted = false;
@@ -718,9 +768,10 @@ export function useNodeGeneration(session: CanvasSession, { setDialogNodeId, cap
                 }
 
                 const options = task.options(node.id, node.id, controller.signal, imageId);
+                const singleImageConfig = { ...generationConfig, count: "1" };
                 const image = useReferenceImages
-                    ? await requestEdit(generationConfig, prompt, retryImages, options).then((items) => items[0])
-                    : await requestGeneration(generationConfig, prompt, options).then((items) => items[0]);
+                    ? await requestEdit(singleImageConfig, prompt, retryImages, options).then((items) => items[0])
+                    : await requestGeneration(singleImageConfig, prompt, options).then((items) => items[0]);
                 const applied = await applyImageResult({ nodeId: node.id, signal: controller.signal, taskId: options.taskId }, image.dataUrl, (prev, uploadedImage) => {
                     const retryImage = imageSlot(uploadedImage, imageId || node.metadata?.primaryImageId || nanoid(), generationConfig.model, Date.now());
                     const generationMetadata = savedImageMetadata?.generationType
@@ -743,9 +794,10 @@ export function useNodeGeneration(session: CanvasSession, { setDialogNodeId, cap
                             type: CanvasNodeType.Image,
                             metadata: {
                                 ...updated.metadata,
-                                status: NODE_STATUS_SUCCESS,
+                                status: updated.metadata?.images?.some((slot) => slot.status === "loading") ? NODE_STATUS_LOADING : NODE_STATUS_SUCCESS,
                                 prompt,
                                 ...generationMetadata,
+                                count: item.metadata?.count ?? generationMetadata.count,
                             },
                         };
                     });
@@ -756,7 +808,11 @@ export function useNodeGeneration(session: CanvasSession, { setDialogNodeId, cap
                     releaseWebSubmission(node.id, webVideoSubmissionId);
                     throw error;
                 }
-                if (resultAccepted || controller.signal.aborted || isGenerationCanceled(error)) throw error;
+                if (controller.signal.aborted || isGenerationCanceled(error)) {
+                    if (await recoverInterruptedImages(node.id, controller, retrySlot)) return;
+                    throw error;
+                }
+                if (resultAccepted) throw error;
                 const errorDetails = generationErrorMessage(error);
                 setGenerationNodes((prev) =>
                     prev.map((item) =>
@@ -765,7 +821,8 @@ export function useNodeGeneration(session: CanvasSession, { setDialogNodeId, cap
                                   ...item,
                                   metadata: {
                                       ...item.metadata,
-                                      status: item.metadata?.storageKey || item.metadata?.content ? NODE_STATUS_SUCCESS : NODE_STATUS_ERROR,
+                                      status: item.metadata?.images?.some((slot) => slot.id !== imageId && slot.status === "loading") ? NODE_STATUS_LOADING :
+                                          item.metadata?.storageKey || item.metadata?.content ? NODE_STATUS_SUCCESS : NODE_STATUS_ERROR,
                                       errorDetails: item.metadata?.storageKey || item.metadata?.content ? undefined : errorDetails,
                                       images: item.metadata?.images?.map((image) => (image.id === imageId ? { ...image, status: NODE_STATUS_ERROR, errorDetails } : image)),
                                   },
@@ -775,10 +832,10 @@ export function useNodeGeneration(session: CanvasSession, { setDialogNodeId, cap
                 );
                 throw error;
             } finally {
-                if (finishGenerationRequest(node.id, controller)) setRunningNodeId((current) => current === node.id ? null : current);
+                if (finishGenerationRequest(node.id, controller, retrySlot) && !generationRequestsRef.current.has(node.id)) setRunningNodeId((current) => current === node.id ? null : current);
             }
         },
-        [applyImageResult, completeAudioNodeTask, completeVideoNodeTask, effectiveConfig, finishGenerationRequest, handleGenerateNode, isAiConfigReady, openConfigDialog, pollVideoNodeTask, startGenerationRequest],
+        [applyImageResult, completeAudioNodeTask, completeVideoNodeTask, effectiveConfig, finishGenerationRequest, handleGenerateNode, isAiConfigReady, observeSavedTasks, openConfigDialog, pollVideoNodeTask, recoverInterruptedImages, startGenerationRequest],
     );
 
 
@@ -858,14 +915,19 @@ export function useNodeGeneration(session: CanvasSession, { setDialogNodeId, cap
             return node;
         };
         const contributions: PluginCommand<any, any>[] = [
-            { command: nodeGenerate, title: "生成节点内容", enabled: ({ nodeId }, context) => getNode(nodeId, context).type !== CanvasNodeType.Group, run: async ({ nodeId, mode, prompt }, context) => {
+            { command: nodeGenerate, title: "生成节点内容", enabled: ({ nodeId }, context) => getNode(nodeId, context).type !== CanvasNodeType.Group && !generationRequestsRef.current.get(nodeId)?.imageRetries, run: async ({ nodeId, mode, prompt }, context) => {
                 getNode(nodeId, context);
                 await handlers.current.handleGenerateNode(nodeId, mode, prompt, context);
                 return context.canvas!.getSnapshot();
             } },
             { command: nodeRetry, title: "重试节点生成", enabled: ({ nodeId, slotId }, context) => {
                 const node = getNode(nodeId, context);
-                return node.type !== CanvasNodeType.Group && !generationRequestsRef.current.has(nodeId) && (slotId === undefined || Boolean(node.metadata?.images?.some((image) => image.id === slotId)));
+                const active = generationRequestsRef.current.get(nodeId);
+                if (node.type === CanvasNodeType.Image && slotId !== undefined) {
+                    const image = node.metadata?.images?.find((item) => item.id === slotId);
+                    return !!image && image.status !== "loading" && (!active || !!active.imageRetries && !active.imageRetries.has(slotId));
+                }
+                return node.type !== CanvasNodeType.Group && !active && (slotId === undefined || Boolean(node.metadata?.images?.some((image) => image.id === slotId)));
             }, run: async ({ nodeId, slotId }, context) => {
                 await handlers.current.handleRetryNode(getNode(nodeId, context), context, slotId);
                 return context.canvas!.getSnapshot();

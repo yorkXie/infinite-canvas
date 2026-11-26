@@ -8,11 +8,34 @@ export type CanvasGenerationRequest = {
     originNodeId: string;
     runningNodeId: string;
     controller: AbortController;
+    slotId?: string;
+    imageRetries?: Map<string, CanvasGenerationRequest>;
     mediaTarget?: { revision: number; type: string; originType?: string; slotId?: string };
     webVideoSubmissionId?: string;
     webVideoTask?: CanvasWebVideoTask;
     release: () => void;
 };
+
+export function activeGenerationRequests(requests: ReadonlyMap<string, CanvasGenerationRequest>) {
+    return [...requests.values()].flatMap((request) => request.imageRetries ? [...request.imageRetries.values()] : [request]);
+}
+
+export function currentGenerationRequest(requests: ReadonlyMap<string, CanvasGenerationRequest>, nodeId: string, slotId?: string) {
+    const request = requests.get(nodeId);
+    return slotId === undefined ? request : request?.imageRetries?.get(slotId);
+}
+
+export function releaseGenerationRequest(requests: Map<string, CanvasGenerationRequest>, request: CanvasGenerationRequest) {
+    const { targetNodeId, slotId } = request;
+    if (currentGenerationRequest(requests, targetNodeId, slotId) !== request) return;
+    request.release();
+    if (slotId !== undefined) {
+        const retries = requests.get(targetNodeId)!.imageRetries!;
+        retries.delete(slotId);
+        if (retries.size) return;
+    }
+    requests.delete(targetNodeId);
+}
 
 /** 有原任务时只能恢复；缺少恢复上下文不能改投一次新生成。 */
 export function resolveNodeRetryTarget(projectId: string, node: ReadonlyCanvasNode, slotId: string | undefined, canRestoreTasks: boolean) {
@@ -32,24 +55,36 @@ export function resolveNodeRetryTarget(projectId: string, node: ReadonlyCanvasNo
 }
 
 /** 同批次目标共用控制器；更换目标请求只撤销对应的上一代。 */
-export function startNodeGenerationRequest(requests: Map<string, CanvasGenerationRequest>, sessionSignal: AbortSignal, targetNodeId: string, originNodeId: string, runningId = originNodeId, controller = new AbortController(), parentSignal?: AbortSignal) {
+export function startNodeGenerationRequest(requests: Map<string, CanvasGenerationRequest>, sessionSignal: AbortSignal, targetNodeId: string, originNodeId: string, runningId = originNodeId, controller = new AbortController(), parentSignal?: AbortSignal, slotId?: string) {
     sessionSignal.throwIfAborted();
     parentSignal?.throwIfAborted();
     controller.signal.throwIfAborted();
     const previous = requests.get(targetNodeId);
     if (previous?.controller === controller) return controller;
-    const signal = parentSignal ? AbortSignal.any([sessionSignal, parentSignal]) : sessionSignal;
+    if (slotId !== undefined && previous && (!previous.imageRetries || previous.imageRetries.has(slotId))) throw new ModelExecutionError("MODEL_TASK_CONFLICT");
+    // 整节点替换媒体时沿用节点控制器取消全部重试，单张任务各自持有子控制器。
+    const group = slotId === undefined ? undefined : previous ?? {
+        targetNodeId, originNodeId, runningNodeId: runningId, controller: new AbortController(), imageRetries: new Map<string, CanvasGenerationRequest>(), release() {},
+    };
+    const signal = AbortSignal.any([sessionSignal, ...(parentSignal ? [parentSignal] : []), ...(group ? [group.controller.signal] : [])]);
+    signal.throwIfAborted();
     const cancel = () => controller.abort(signal.reason);
     signal.addEventListener("abort", cancel, { once: true, signal: controller.signal });
-    previous?.release();
-    previous?.controller.abort();
-    requests.set(targetNodeId, { targetNodeId, originNodeId, runningNodeId: runningId, controller, release: () => signal.removeEventListener("abort", cancel) });
+    const request = { targetNodeId, originNodeId, runningNodeId: runningId, controller, slotId, release: () => signal.removeEventListener("abort", cancel) };
+    if (group && slotId !== undefined) {
+        group.imageRetries!.set(slotId, request);
+        requests.set(targetNodeId, group);
+    } else {
+        previous?.release();
+        previous?.controller.abort();
+        requests.set(targetNodeId, request);
+    }
     return controller;
 }
 
 /** 先捕获同一控制器上的全部任务，收到停止回执后只更新仍属于本次操作的节点。 */
 export async function stopNodeGenerationRequests(runningId: string, requests: Map<string, CanvasGenerationRequest>, stop: (nodeId: string, signal: AbortSignal) => Promise<boolean>, update: (confirmed: Set<string>, finished: Set<string>) => void, original?: ReadonlySet<AbortController>) {
-    const active = [...requests.values()];
+    const active = activeGenerationRequests(requests);
     const controllers = original ?? new Set(active.filter((item) => [item.runningNodeId, item.targetNodeId, item.originNodeId].includes(runningId)).map((item) => item.controller));
     const targets = active.filter((item) => controllers.has(item.controller));
     const receipts = targets.map((item) => stop(item.targetNodeId, item.controller.signal));
@@ -60,17 +95,16 @@ export async function stopNodeGenerationRequests(runningId: string, requests: Ma
     const retained = new Set<string>();
     for (const [index, item] of targets.entries()) {
         const result = results[index];
-        const current = requests.get(item.targetNodeId) === item;
+        const current = currentGenerationRequest(requests, item.targetNodeId, item.slotId) === item;
         const ids = current && result.status === "fulfilled" && result.value ? confirmed : retained;
         ids.add(item.targetNodeId);
         ids.add(item.originNodeId);
         if (current) {
             finished.add(item.runningNodeId);
-            item.release();
-            requests.delete(item.targetNodeId);
+            releaseGenerationRequest(requests, item);
         }
     }
-    for (const item of requests.values()) {
+    for (const item of activeGenerationRequests(requests)) {
         finished.delete(item.runningNodeId);
         retained.add(item.targetNodeId);
         retained.add(item.originNodeId);

@@ -9,6 +9,7 @@ import { models } from "@workbench/services/api/models/runtime";
 import type { ModelRequestOptions } from "@workbench/services/api/models/types";
 import type { CanvasSession } from "@workbench/lib/canvas/canvas-session";
 import { prepareImage } from "@workbench/lib/canvas/canvas-session-media";
+import { registerCanvasNodeAsset } from "@workbench/lib/canvas/register-canvas-asset";
 import { emitPluginEvent } from "@workbench/lib/plugins/runtime";
 import { useCanvasStore } from "@workbench/stores/canvas/use-canvas-store";
 
@@ -49,19 +50,26 @@ async function resultMetadata(session: CanvasSession, task: ModelTask, signal: A
 function updateRecovered(node: CanvasNodeData, binding: Binding, patch: CanvasNodeMetadata, keep: boolean) {
     const meta = node.metadata!;
     const tasks = keep ? meta.tasks : meta.tasks?.filter((item) => !sameBinding(item, binding));
+    const waitingForImage = (images: CanvasNodeMetadata["images"]) => tasks?.some((task) => images?.some((slot) => slot.id === task.slotId && slot.status === "loading"));
     const image = binding.slotId && meta.images?.find((slot) => slot.id === binding.slotId);
     if (image && patch.status === "success") {
         const updated = completeBatchImage(node, { ...image, ...patch, promotedAt: undefined, content: patch.content ?? image.content }, { recovered: true });
-        return { ...updated, metadata: { ...updated.metadata, tasks, status: tasks?.length ? "loading" as const : "success" as const, errorDetails: undefined } };
+        return { ...updated, metadata: { ...updated.metadata, tasks, status: waitingForImage(updated.metadata?.images) ? "loading" as const : "success" as const, errorDetails: undefined } };
     }
     const images = binding.slotId ? meta.images?.map((item) => item.id === binding.slotId ? { ...item, ...patch, content: patch.content ?? item.content } : item) : patch.images ?? meta.images;
+    // 新一轮尚未出图时，恢复失败状态也沿用队首的占位图，旧图仍在历史列表里。
+    if (image && !meta.primaryImageId && !meta.content && !meta.storageKey) {
+        const status = waitingForImage(images) ? "loading" as const : "error" as const;
+        return { ...node, metadata: { ...meta, images, tasks, status, errorDetails: status === "error" ? patch.errorDetails : undefined } };
+    }
     const texts = meta.texts?.map((item) => item.id === binding.slotId ? { ...item, ...patch, content: patch.content ?? item.content } : item);
     const slots = images ?? texts ?? [];
     const primaryId = images ? meta.primaryImageId : meta.primaryTextId;
     const selected = slots.find((item) => item.id === primaryId);
     const primary = images ? images.find((item) => item.status === "success" && (item.storageKey || item.content)) : selected && selected.status !== "error" ? selected : slots.find((item) => item.status === "success");
     const success = patch.status === "success" || slots.some((item) => item.status === "success");
-    const status = tasks?.length && !keep ? "loading" : success ? "success" : "error";
+    const waiting = image ? waitingForImage(images) : tasks?.length && !keep;
+    const status = waiting ? "loading" : success ? "success" : "error";
     const metadata: CanvasNodeMetadata = { ...meta, ...(!binding.slotId ? patch : {}), images, texts, tasks, status, errorDetails: status === "error" ? patch.errorDetails : undefined };
     if (binding.slotId && primary) {
         metadata.content = primary.content;
@@ -132,6 +140,10 @@ export function useCanvasTasks(session: CanvasSession, cancel: (signal: AbortSig
         try { result = await resultMetadata(session, snapshot, signal); }
         catch (error) { return publishFailure(item, signal, error, true); }
         publish(item, signal, { ...result, status: "success", errorDetails: undefined }, false, snapshot.action);
+        if (snapshot.action === "image" && !session.signal.aborted) {
+            const node = session.getSnapshot().nodes.find((entry) => entry.id === item.binding.nodeId);
+            if (node) void registerCanvasNodeAsset(node, "生成");
+        }
         return true;
     }
 
@@ -180,6 +192,10 @@ export function useCanvasTasks(session: CanvasSession, cancel: (signal: AbortSig
     function canApply(taskId: string, nodeId: string, signal: AbortSignal) {
         const item = live.current.get(taskId);
         return !!item && item.signal === signal && !signal.aborted && !session.signal.aborted && item.binding.nodeId === nodeId && hasBinding(session.getSnapshot().nodes, projectId, item.binding);
+    }
+
+    function isRestoring(owner: AbortSignal) {
+        return [...live.current.values()].some((item) => item.restoring && item.owner === owner);
     }
 
     function applied(taskId: string, signal: AbortSignal) {
@@ -270,8 +286,9 @@ export function useCanvasTasks(session: CanvasSession, cancel: (signal: AbortSig
                     });
                 } catch (error) {
                     if (signal.aborted || session.signal.aborted) return false;
+                    const failed = publishFailure(item, signal, error, !item.terminal);
                     if (error instanceof ModelExecutionError && error.code === "MODEL_TASK_CONFLICT") throw error;
-                    return publishFailure(item, signal, error, !item.terminal);
+                    return failed;
                 }
                 return await applyCompleted(item, snapshot, signal);
             } finally { forget(item); }
@@ -279,5 +296,5 @@ export function useCanvasTasks(session: CanvasSession, cancel: (signal: AbortSig
         for (const result of results) if (result.status === "rejected") throw result.reason;
         return results.some((result) => result.status === "fulfilled" && result.value);
     }
-    return { options, finish, restore, stop, canApply, applied };
+    return { options, finish, restore, stop, canApply, applied, isRestoring };
 }
