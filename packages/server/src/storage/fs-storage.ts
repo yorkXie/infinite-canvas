@@ -15,20 +15,20 @@ import {
 import { storageCategoryInfo, type StorageCategoryUsage, type StorageEntry, type StorageUsage } from "@infinite-canvas/shared/storage-inspection";
 import { collectStorageReferences, collectStringValues, referenceCollections, type StorageReference } from "@infinite-canvas/shared/resource-references";
 import { logger } from "../utils/logger.js";
-import { archiveResourceSchema, type ArchiveInstall, type ArchiveResource } from "@infinite-canvas/shared/work-archive";
+import { archiveResourceSchema, type ArchiveInstall, type ArchivePreferences, type ArchiveResource } from "@infinite-canvas/shared/work-archive";
 import { applyAssetEdits, assetLibraryEditsSchema, type AssetLibraryEdits } from "@infinite-canvas/shared/sync-records";
 import { readDiskJson, writeDiskJson } from "./records.js";
 import { pluginSyncStorageKey, pluginSyncStoragePrefix, type PluginSyncDomainSnapshot } from "@infinite-canvas/shared/sync-data";
 import { applyWorkspaceConfigMutation, defaultWorkspaceConfig, storedWorkspaceConfigSchema, type WorkspaceConfigMutation } from "@infinite-canvas/shared/workspace-config";
 
 const directories: Record<string, string> = {
-    projects: "projects", works: "works", library: "library", scripts: "scripts", state: "state", preferences: "preferences",
+    projects: "projects", works: "works", library: "library", scripts: "scripts", state: "state", preferences: "preferences", promptCache: "cache/prompts",
     imageRecords: "records/image", videoRecords: "records/video", audioRecords: "records/audio", agentRecords: "records/agent", chats: "chats",
     images: "assets/images", previews: "assets/previews", media: "assets/media", privateChannels: "private/channels", privateConfig: "private/config", task: "private/task",
 };
-export const publicStorageCollections = ["projects", "works", "library", "scripts", "state", "preferences", "imageRecords", "videoRecords", "audioRecords", "agentRecords", "chats", "images", "previews", "media"] as const;
+export const publicStorageCollections = ["projects", "works", "library", "scripts", "state", "preferences", "promptCache", "imageRecords", "videoRecords", "audioRecords", "agentRecords", "chats", "images", "previews", "media"] as const;
 const binaryDirectories = ["assets/images", "assets/previews", "assets/media"];
-const recordDirectories = [...Object.values(directories).filter((directory) => !directory.startsWith("assets/") && !directory.startsWith("private/")), directories.task];
+const recordDirectories = [...Object.values(directories).filter((directory) => !directory.startsWith("assets/") && !directory.startsWith("private/") && directory !== directories.promptCache), directories.task];
 const pluginData = "plugins/data", pluginFiles = "plugins/files";
 const extensions: Record<string, string> = {
     "image/png": "png", "image/jpeg": "jpg", "image/webp": "webp", "image/gif": "gif", "image/avif": "avif", "image/svg+xml": "svg",
@@ -221,19 +221,33 @@ export class FsStorage {
         }
     }
 
-    installArchive(install: ArchiveInstall, clientId: string) {
+    /** 两个页面同时首次启动时，已有记录和删除标记均优先于浏览器旧值。 */
+    seedPreference(collection: "preferences" | "promptCache", key: string, value: unknown, clientId: string) {
+        return this.commit(async () => await this.read(collection, key) ?? await this.replace(collection, { key, value }, clientId));
+    }
+
+    installArchive(install: ArchiveInstall & { preferences?: ArchivePreferences }, clientId: string) {
         return this.commit(async () => {
             const { target } = install;
             const [collection, key] = target.kind === "canvas" ? ["projects", target.document.id] : ["works", target.work.workId];
-            if ((await this.read(collection, key))?.value) return;
-            for (const { resource, blob } of install.files) {
-                const owner = resource.collection === "plugin-files" ? `plugin-files:${resource.owner}` : resource.collection;
-                await this.writeAsset(owner, resource.key, Readable.from(Buffer.from(await blob.arrayBuffer())), blob.type, clientId);
+            const existing = await this.read(collection, key);
+            if (!existing?.value) {
+                for (const { resource, blob } of install.files) {
+                    const owner = resource.collection === "plugin-files" ? `plugin-files:${resource.owner}` : resource.collection;
+                    await this.writeAsset(owner, resource.key, Readable.from(Buffer.from(await blob.arrayBuffer())), blob.type, clientId);
+                }
+                if (target.kind === "work") {
+                    await this.replace(collection, { key, value: serializeStandaloneWork(key, target.work), updatedAt: nextRecordUpdatedAt() }, clientId);
+                    return;
+                }
+                for (const thread of target.threads) await this.replace("chats", { key: thread.id, value: thread }, clientId);
             }
             if (target.kind === "canvas") {
-                for (const thread of target.threads) await this.replace("chats", { key: thread.id, value: thread }, clientId);
-                await this.replace(collection, { key, value: serializeCanvasDocument(target.document) }, clientId);
-            } else await this.replace(collection, { key, value: serializeStandaloneWork(key, target.work), updatedAt: nextRecordUpdatedAt() }, clientId);
+                if (install.preferences && !await this.read("preferences", key)) {
+                    await this.replace("preferences", { key, value: install.preferences }, clientId);
+                }
+                if (!existing?.value) await this.replace(collection, { key, value: serializeCanvasDocument(target.document) }, clientId);
+            }
         });
     }
 

@@ -5,6 +5,7 @@ import { createJSONStorage, persist } from "zustand/middleware";
 import { nanoid } from "nanoid";
 import { toast } from "sonner";
 
+import { appPreferences, preferenceKeys } from "@workbench/services/storage/preferences";
 import { createSettingsWriter } from "@workbench/utils/settings-writer";
 import { channels } from "@workbench/services/channels/runtime";
 import { defaultCallScriptId } from "@workbench/lib/model-utils";
@@ -51,7 +52,7 @@ export type AiConfig = {
     generationOptions: GenerationOptions;
 };
 
-export const CONFIG_STORE_KEY = "infinite-canvas-v1:ai_config_store";
+export const CONFIG_STORE_KEY = preferenceKeys.config;
 const GROUP_MODEL_SEPARATOR = "::";
 const OPENAI_BASE_URL = "https://api.openai.com";
 export const LOCAL_PROXY_PACKAGE = "@basketikun/canvas-proxy";
@@ -184,7 +185,7 @@ export const useConfigStore = create<ConfigStore>()(persist(
     }),
     {
         name: CONFIG_STORE_KEY,
-        storage: createJSONStorage(() => localStorage),
+        storage: createJSONStorage(() => appPreferences),
         version: 3,
         partialize: (state) => ({ config: { ...state.config, channels: [], models: [], apiKey: "", baseUrl: "" } }),
         merge: (persisted, current) => ({ ...current, config: { ...defaultConfig, ...(persisted as Pick<ConfigStore, "config"> | undefined)?.config, channels: [], models: [] } }),

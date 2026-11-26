@@ -20,6 +20,7 @@ import { getPluginContributions } from "@workbench/lib/plugins/runtime";
 import { createLayoutViewScope, getSelectedLayout } from "@workbench/lib/plugins/layout";
 import { resolveNavigation } from "@workbench/lib/plugins/navigation";
 import { workspaceBinding } from "@workbench/lib/plugins/registry";
+import { appPreferences, preferenceKeys } from "@workbench/services/storage/preferences";
 import { usePluginStore } from "@workbench/stores/use-plugin-store";
 import { usePluginViewScope } from "@workbench/hooks/use-plugin-view-scope";
 
@@ -77,12 +78,12 @@ export default function UserLayout({ children }: { children: ReactNode }) {
     const navigation = <AppTopNav items={items} brand={brand} actions={actions} />;
     const sidebar = !canvas;
     const [isDesktop, setIsDesktop] = useState(() => typeof window !== "undefined" && typeof window.matchMedia === "function" && window.matchMedia("(min-width: 64rem)").matches);
-    const [sidebarCollapsed, setSidebarCollapsed] = useState(() => typeof window !== "undefined" && localStorage.getItem("workbench-sidebar-collapsed") === "1");
-    const toggleSidebar = () => setSidebarCollapsed((value) => {
-        const next = !value;
-        try { localStorage.setItem("workbench-sidebar-collapsed", next ? "1" : "0"); } catch { /* 本地偏好不可写时只影响下次打开 */ }
-        return next;
-    });
+    const [sidebarCollapsed, setSidebarCollapsed] = useState(() => typeof window !== "undefined" && appPreferences.getItem(preferenceKeys.sidebar) === "1");
+    const toggleSidebar = () => {
+        const next = !sidebarCollapsed;
+        setSidebarCollapsed(next);
+        try { void appPreferences.setItem(preferenceKeys.sidebar, next ? "1" : "0"); } catch { /* 浏览器禁用网站存储时仍可折叠侧栏 */ }
+    };
     useEffect(() => {
         const query = window.matchMedia("(min-width: 64rem)");
         const update = () => setIsDesktop(query.matches);

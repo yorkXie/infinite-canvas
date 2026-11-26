@@ -21,7 +21,7 @@ export function usePromptSourceScheduler() {
             try {
                 const result = await refreshDueSources(intervalMinutes * 60_000);
                 if (!result.results.length) return;
-                updateSchedule("lastFetchedAt", new Date().toISOString());
+                await updateSchedule("lastFetchedAt", new Date().toISOString());
                 await Promise.all([
                     queryClient.invalidateQueries({ queryKey: ["prompts"] }),
                     queryClient.invalidateQueries({ queryKey: ["side-panel-prompts"] }),

@@ -1,5 +1,6 @@
 import type { ObjectStorageConfig } from "@infinite-canvas/shared/object-storage";
 import { defaultWorkspaceConfig, workspaceConfigSchema, type WorkspaceConfig } from "@infinite-canvas/shared/workspace-config";
+import { appPreferences } from "./storage/preferences";
 import { workspaceConfig } from "./workspace-config/runtime";
 import saveAs from "file-saver";
 
@@ -25,7 +26,7 @@ type AppConfigFile = {
 };
 
 export async function exportAppConfig() {
-    await Promise.all([callScriptsSaved, channelWrites.flush(), workspaceConfigWrites.flush()]);
+    await Promise.all([callScriptsSaved, channelWrites.flush(), workspaceConfigWrites.flush(), appPreferences.flush()]);
     const { config } = useConfigStore.getState();
     const { syncConnections, objectStorage } = await workspaceConfig.load() ?? defaultWorkspaceConfig;
     const { sources, schedule } = usePromptSourceStore.getState();
@@ -56,5 +57,6 @@ export async function importAppConfig(file: File) {
     await channelWrites.flush();
     await saveWorkspaceConfig(workspace.data);
     useConfigStore.setState({ config: { ...config, channels: useConfigStore.getState().config.channels } });
-    usePromptSourceStore.getState().saveConfig(data.promptSources);
+    await usePromptSourceStore.getState().saveConfig(data.promptSources);
+    await appPreferences.flush();
 }

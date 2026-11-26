@@ -1,4 +1,5 @@
 import { initializePlugins } from "../services/plugins/runtime";
+import { loadLocalPreferences } from "../services/storage/local-preferences";
 import { createHttpStorage } from "../services/storage/http";
 import { initializeStorage } from "../services/storage/runtime";
 import { initializeChannels } from "../services/channels/runtime";
@@ -13,13 +14,11 @@ import { initializeStorageInspection } from "../services/storage-inspection/runt
 import { createHttpStorageInspection } from "../services/storage-inspection/http";
 
 export async function startLocal() {
-    const response = await fetch("/api/storage/projects");
-    if (!response.ok) throw new Error("WORKSPACE_UNAVAILABLE");
     const storage = createHttpStorage();
     initializeStorage(storage);
     initializeStorageInspection(createHttpStorageInspection());
     initializeWorkspaceConfig(createHttpWorkspaceConfig());
-    await loadWorkspaceConfig();
+    await Promise.all([loadLocalPreferences(storage), loadWorkspaceConfig()]);
     initializeNetwork(createLocalNetwork(location.origin));
     initializeChannels(createHttpChannels());
     const { loadChannelConfig } = await import("../stores/use-config-store");

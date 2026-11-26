@@ -40,7 +40,7 @@ pnpm dev:web
 
 ## 本地数据与打包
 
-本地工作台的渠道及模型密钥保存到所选目录的 `private/channels/`，网页只读取密钥是否已配置；WebDAV 和对象存储配置保存在 `private/config/`，界面偏好仍在浏览器。服务不可用时不会退回浏览器存储。
+本地工作台的渠道及模型密钥保存到所选目录的 `private/channels/`，网页只读取密钥是否已配置；WebDAV 和对象存储配置保存在 `private/config/`，界面偏好与各画布视图保存在 `preferences/`，下载的提示词缓存在 `cache/prompts/`。服务不可用时不会退回浏览器存储。
 
 本地模式不显示「本地代理」，也不需要启动 `@basketikun/canvas-proxy`。模型请求使用专用服务，WebDAV、远程素材和资源下载通过同源网络入口完成；浏览器代理开关只影响纯 Web。
 

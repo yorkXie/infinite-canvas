@@ -15,19 +15,19 @@ const fields = [
     ["homepage", "来源主页（可选）", "https://example.com"],
 ] as const;
 
-export function PromptSourceEditorDrawer({ open, source, trigger, signal, onSave, onClose }: { open: boolean; source: PromptSource; trigger: HTMLButtonElement; signal: AbortSignal; onSave: (source: PromptSource) => boolean; onClose: () => void }) {
+export function PromptSourceEditorDrawer({ open, source, trigger, signal, onSave, onClose }: { open: boolean; source: PromptSource; trigger: HTMLButtonElement; signal: AbortSignal; onSave: (source: PromptSource) => Promise<boolean>; onClose: () => void }) {
     const [draft, setDraft] = useState(source);
     useLayoutEffect(() => {
         if (open) setDraft(source);
     }, [open, source]);
 
-    const save = () => {
+    const save = async () => {
         const name = draft.name.trim();
         const url = draft.url.trim();
         if (!name) return toast.warning("请输入来源名称", workbenchMessageOptions.warning);
         if (!isHttpUrl(url)) return toast.warning("请输入有效的 JSON URL", workbenchMessageOptions.warning);
         if (draft.homepage.trim() && !isHttpUrl(draft.homepage.trim())) return toast.warning("请输入有效的主页地址", workbenchMessageOptions.warning);
-        if (onSave({ ...draft, name, url, homepage: draft.homepage.trim(), builtIn: false })) onClose();
+        if (await onSave({ ...draft, name, url, homepage: draft.homepage.trim(), builtIn: false })) onClose();
     };
 
     return (

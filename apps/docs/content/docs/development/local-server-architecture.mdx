@@ -151,7 +151,7 @@ shared 不决定执行位置。脚本运行器放在 `model-runtime`，浏览器
 
 共用组件、业务页面、hooks、store 和 adapter 放在 `packages/workbench/`；Web 与 CLI 各自拥有入口、路由和导航。文档数据结构在 shared 的 canvas 模块，编辑会话、选区、悬停、拖拽、面板和撤销历史仍在界面层。
 
-保存的视口和界面偏好与共享文档内容区分管理，避免一个标签页缩放画布就覆盖另一个标签页的视角。调整字段归属时保留“重新打开项目恢复自己的视角”的交互，不把所有状态都塞进共享文档。
+工作区分别保存画布文档和视图。平移、缩放与背景按画布 ID 保存，重新打开画布时从所选工作区恢复上次视角。
 
 ### server
 
@@ -173,7 +173,7 @@ server 负责同源静态资源、项目与素材读写、保存版本、变更�
 | imageRecords / videoRecords | 可更新、删除的生成记录 |
 | chats | 以会话 ID 保存，内容包含所属项目 ID |
 | pluginData(pluginId) | 插件可序列化私有数据 |
-| preferences | 当前浏览器的视口与显示偏好，不发往服务 |
+| preferences | 画布视图和应用偏好，CLI 通过服务写入工作区 |
 
 HTTP 使用 `/api/storage/:collection/:key` 读写逻辑记录，以 `{ value, clientId }` 提交；`/api/assets/:collection/:key` 独立上传或读取二进制，`/api/storage/events` 通过 WebSocket 推送变化通知。接口不暴露 IndexedDB 数据库名。媒体预览 URL 的创建与释放仍由网页媒体服务负责。
 
@@ -195,14 +195,14 @@ server 无法连接时保留 server 模式，提示重试，不自动切到 Brow
 | --- | --- | --- |
 | 画布文档、我的素材、原始媒体、生成记录、聊天历史 | 浏览器 localforage | 工作区磁盘目录 |
 | 调用脚本、插件安装信息与可持久化业务数据 | 浏览器 localforage | 工作区磁盘目录 |
-| 缩略图、公共提示词缓存等可重建内容 | 浏览器缓存 | 在浏览器缓存，不作为唯一业务副本 |
+| 缩略图、提示词缓存 | 浏览器 IndexedDB | 工作区 `assets/previews/` 和 `cache/prompts/` |
 | 选区、撤销历史、拖拽状态 | 页面内存 | 页面内存 |
-| 主题、面板宽度、项目视口等设备偏好 | 当前浏览器 | 当前浏览器或 Desktop 窗口环境 |
+| 默认模型、生图选项、主题、侧栏和项目视图 | 当前浏览器 | 工作区 `preferences/` |
 | 渠道配置与 API Key | 浏览器独立 localforage 存储 | 工作区 `private/channels/`，网页读取时不返回密钥 |
 | 生成任务 | 浏览器视频生成记录可保存第三方任务编号 | 画布和工作台保存本地 `taskId`，完整任务记录位于 `private/task/` |
 | WebDAV 和对象存储配置、最近同步时间 | 浏览器独立 localforage 存储 | 工作区 `private/config/`；模型执行读取磁盘配置，不写入任务快照 |
 
-同一工作区的渠道、WebDAV 和对象存储配置可在新浏览器连接后继续使用。主题、面板宽度和默认模型选择仍属于当前浏览器。认证网页会在内存中读取 WebDAV 和对象存储凭据用于编辑、同步和配置备份；这些配置不再写入浏览器偏好，完整配置备份仍包含相应凭据。
+同一工作区的渠道、WebDAV 和对象存储配置可在新浏览器连接后继续使用。应用偏好和画布视图也会从同一工作区恢复。认证网页会在内存中读取 WebDAV 和对象存储凭据用于编辑、同步和配置备份；这些配置不再写入浏览器偏好，完整配置备份仍包含相应凭据。
 
 本地渠道密钥保存在权限受限的工作区文件中，尚未接入系统钥匙串；工作区整体备份包含这些密钥。通用存储 HTTP 路径不能读取私有集合。浏览器配置偏好不保存渠道；配置文件仅接受当前版本 7，导出的完整配置含按插件包分别保存的同步连接。
 
@@ -214,6 +214,8 @@ server 无法连接时保留 server 模式，提示重试，不自动切到 Brow
 Canvas/
   workspace.json                 工作区 ID 与 schemaVersion
   .canvas.lock                   系统文件锁载体；进程结束自动释放占用
+  preferences/<key>.json          应用设置或单张画布的视图
+  cache/prompts/<key>.json        按来源保存的提示词缓存
   projects/<project-id>.json      画布文档，删除后保留记录
   assets/
     images/<key-hash>.json        图片元信息及原始文件标识

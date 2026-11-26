@@ -1,5 +1,4 @@
-import { appDatabase } from "@workbench/utils/indexed-db";
-import localforage from "localforage";
+import { storage } from "@workbench/services/storage/runtime";
 
 import { runPromptSource, type RawPrompt } from "./prompt-source-runtime";
 import { usePromptSourceStore } from "@workbench/stores/use-prompt-source-store";
@@ -48,7 +47,6 @@ type SourceCache = PromptSourceStatus & {
 
 const cacheTtlMs = 1000 * 60 * 60;
 const refreshFailure = "提示词来源更新失败，请检查来源地址后重试。";
-const promptCacheStore = localforage.createInstance({ name: appDatabase, storeName: "prompt_cache" });
 const loadingSources = new Map<PromptSource, Promise<PromptSourceRefreshResult | null>>();
 let refreshQueue = Promise.resolve();
 
@@ -76,7 +74,7 @@ function withSourceMeta(source: PromptSource, items: RawPrompt[]): Prompt[] {
 }
 
 async function readSourceCache(source: PromptSource) {
-    const cache = await promptCacheStore.getItem<SourceCache>(cacheKey(source.id));
+    const cache = await storage.promptCache.getItem<SourceCache>(cacheKey(source.id));
     return cache?.signature === sourceSignature(source) ? cache : null;
 }
 
@@ -107,7 +105,7 @@ async function refreshSourceRecord(source: PromptSource): Promise<PromptSourceRe
         }
         if (request.signal.aborted) return null;
         const cache: SourceCache = { sourceId: source.id, items, count: items.length, lastSuccessAt, fetchedAt, lastError, signature: sourceSignature(source) };
-        await promptCacheStore.setItem(cacheKey(source.id), cache);
+        await storage.promptCache.setItem(cacheKey(source.id), cache);
         return request.signal.aborted ? null : { sourceId: source.id, sourceName: source.name, count: items.length, lastSuccessAt, lastError, success: !lastError };
     } finally {
         unsubscribe();

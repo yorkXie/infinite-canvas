@@ -1,5 +1,6 @@
 import { create } from "zustand";
-import { persist } from "zustand/middleware";
+import { createJSONStorage, persist } from "zustand/middleware";
+import { appPreferences, preferenceKeys } from "@workbench/services/storage/preferences";
 
 export const CANVAS_SIDE_PANEL_MOTION_MS = 500;
 export const CANVAS_SIDE_PANEL_MIN_WIDTH = 220;
@@ -41,6 +42,6 @@ export const useCanvasSidePanelStore = create<CanvasSidePanelStore>()(persist((s
     },
     togglePanel: () => (get().panelOpen ? get().closePanel() : get().openPanel()),
 }), {
-    name: "infinite-canvas:canvas_side_panel_v2",
+    name: preferenceKeys.canvasPanel, storage: createJSONStorage(() => appPreferences),
     partialize: ({ width, nodeViewMode }) => ({ width, nodeViewMode }),
 }));

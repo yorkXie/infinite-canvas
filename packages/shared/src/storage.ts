@@ -45,6 +45,7 @@ export interface StorageAdapter {
         compareSync(expected: WorkSyncRecord | null, next: WorkSyncRecord): Promise<boolean>;
     };
     readonly preferences: StorageCollection;
+    readonly promptCache: StorageCollection;
     /** 图片原件；缩略图按同一键保存在 previews。 */
     readonly images: StorageCollection;
     readonly previews: StorageCollection;

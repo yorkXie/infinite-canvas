@@ -1,5 +1,6 @@
 import { create } from "zustand";
-import { persist } from "zustand/middleware";
+import { createJSONStorage, persist } from "zustand/middleware";
+import { appPreferences, preferenceKeys } from "@workbench/services/storage/preferences";
 import type { PluginPanel } from "@infinite-canvas/plugin-sdk";
 import type { RegisteredContribution, ScopeBinding } from "@infinite-canvas/plugin-sdk/runtime";
 import { PluginScope } from "@infinite-canvas/plugin-sdk/scope";
@@ -54,6 +55,6 @@ export const usePluginStore = create<{
         return record;
     },
 }), {
-    name: "infinite-canvas:plugin-selection",
+    name: preferenceKeys.pluginLayout, storage: createJSONStorage(() => appPreferences),
     partialize: ({ layoutSelection }) => ({ layoutSelection }),
 }));

@@ -92,6 +92,12 @@ export function mountStorage(app: Express, storage: FsStorage) {
         await storage.editAssetLibrary(req.body, clientId);
         res.status(204).end();
     });
+    app.post("/api/storage/:collection/:key/seed", express.json({ limit: "30mb" }), async (req, res) => {
+        const { collection, key } = req.params;
+        const parsed = storageWriteSchema.safeParse(req.body);
+        if ((collection !== "preferences" && collection !== "promptCache") || !parsed.success) throw new StorageError("STORAGE_INVALID");
+        res.json(await storage.seedPreference(collection, key, parsed.data.value, parsed.data.clientId));
+    });
     app.post("/api/storage/works/:key", express.json({ limit: "30mb" }), async (req, res) => {
         const parsed = storageWriteSchema.safeParse(req.body);
         if (!parsed.success) throw new StorageError("STORAGE_INVALID");
@@ -129,7 +135,8 @@ export function mountStorage(app: Express, storage: FsStorage) {
             : await storage.save(req.params.collection, req.params.key, value, clientId);
         if (req.params.collection === "chats" && value !== null && req.get("prefer") === "return=minimal") {
             res.set("x-canvas-updated-at", (record.value as ArchiveThread).updatedAt).status(204).end();
-        } else res.json(record);
+        } else if (req.params.collection === "promptCache" && req.get("prefer") === "return=minimal") res.status(204).end();
+        else res.json(record);
     });
     app.delete("/api/storage/:collection/:key", async (req, res) => {
         const clientId = req.get("x-canvas-client-id");

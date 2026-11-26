@@ -1,5 +1,6 @@
 import { create } from "zustand";
-import { persist } from "zustand/middleware";
+import { createJSONStorage, persist } from "zustand/middleware";
+import { appPreferences, preferenceKeys } from "@workbench/services/storage/preferences";
 import type { AgentChatItem } from "./use-agent-chat-store";
 
 import type { CanvasAgentOp } from "@infinite-canvas/shared/canvas/tools/types";
@@ -42,4 +43,4 @@ export const useAgentStore = create<AgentStore>()(persist((set, get) => ({
         setTimeout(() => { if (get().panelClosing) set({ panelClosing: false }); }, CANVAS_AGENT_PANEL_MOTION_MS);
     },
     togglePanel: () => get().panelOpen ? get().closePanel() : get().openPanel(),
-}), { name: "infinite-canvas:agent_panel", partialize: ({ width }) => ({ width }) }));
+}), { name: preferenceKeys.agentPanel, storage: createJSONStorage(() => appPreferences), partialize: ({ width }) => ({ width }) }));

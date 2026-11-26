@@ -1,8 +1,8 @@
-import type { StorageAdapter } from "@infinite-canvas/shared/storage";
+import type { StorageAdapter, StorageCollection } from "@infinite-canvas/shared/storage";
 import { nextRecordUpdatedAt, serializeCanvasDocument, StorageError } from "@infinite-canvas/shared/storage-data";
 import type { ArchivePreferences } from "@infinite-canvas/shared/work-archive";
 
-export async function saveArchivePreferences(preferences: LocalForage, id: string, value: ArchivePreferences) {
+export async function saveArchivePreferences(preferences: Pick<StorageCollection, "getItem" | "setItem">, id: string, value: ArchivePreferences) {
     if (await preferences.getItem(id) === null) await preferences.setItem(id, value);
 }
 

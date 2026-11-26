@@ -1,17 +1,18 @@
-import { appDatabase } from "@workbench/utils/indexed-db";
 import { requestStorage } from "@workbench/lib/storage-request";
-import localforage from "localforage";
 import type { StorageAdapter, StorageCollection } from "@infinite-canvas/shared/storage";
 import { encodeArchiveInstall } from "@infinite-canvas/shared/work-archive";
 import { sha256 } from "@infinite-canvas/shared/utils/sha256";
 import type { CanvasDocument } from "@infinite-canvas/shared/canvas/schema/canvas";
 import { chatSyncBaseline, serializeCanvasDocument, serializeStandaloneWork, serializeStorageData, storedChatSyncRecord, storedWorkSyncRecord, StorageError, workSyncBaseline, type ChatSyncRecord, type StorageChange, type StorageRecord, type StorageWrite, type WorkSyncRecord } from "@infinite-canvas/shared/storage-data";
 import { reportStorageError } from "./status";
-import { saveArchivePreferences } from "./browser-archive";
 import { assetLibraryKey } from "@infinite-canvas/shared/sync-records";
 import { openLocalSocket } from "@workbench/lib/local-socket";
 
-export function createHttpStorage(): StorageAdapter {
+export type LocalStorageAdapter = StorageAdapter & {
+    seedPreference(collection: "preferences" | "promptCache", key: string, value: unknown): Promise<StorageRecord>;
+};
+
+export function createHttpStorage(): LocalStorageAdapter {
     const clientId = crypto.randomUUID();
     const listeners = new Map<string, Set<(key: string | null) => void>>();
     const collections = new Map<string, StorageCollection>();
@@ -78,7 +79,7 @@ export function createHttpStorage(): StorageAdapter {
                         : { method: "PUT", headers: { "x-canvas-client-id": clientId, "content-type": (snapshot as Blob).type }, body: snapshot as Blob });
                 } else {
                     await request(`${endpoint}/${encodeURIComponent(key)}`, {
-                        method: "PUT", headers: { "content-type": "application/json" }, body: JSON.stringify({ value: snapshot, clientId } satisfies StorageWrite),
+                        method: "PUT", headers: { "content-type": "application/json", ...(name === "promptCache" && { prefer: "return=minimal" }) }, body: JSON.stringify({ value: snapshot, clientId } satisfies StorageWrite),
                     });
                 }
             });
@@ -134,7 +135,6 @@ export function createHttpStorage(): StorageAdapter {
             }
         },
     };
-    const preferences = localforage.createInstance({ name: appDatabase, storeName: "device_preferences", driver: localforage.INDEXEDDB });
     return {
         editAssetLibrary(edits) {
             const body = JSON.stringify(edits);
@@ -165,7 +165,13 @@ export function createHttpStorage(): StorageAdapter {
                 })).json() as Promise<boolean>);
             },
         },
-        preferences,
+        preferences: collection("preferences"), promptCache: collection("promptCache"),
+        async seedPreference(name, key, value) {
+            const response = await request(`/api/storage/${name}/${encodeURIComponent(key)}/seed`, {
+                method: "POST", headers: { "content-type": "application/json" }, body: JSON.stringify({ value, clientId }),
+            });
+            return response.json();
+        },
         images: collection("images"), previews: collection("previews"), media: collection("media"),
         agentRecords: collection("agentRecords"),
         imageRecords: collection("imageRecords"), videoRecords: collection("videoRecords"), audioRecords: collection("audioRecords"),
@@ -200,7 +206,6 @@ export function createHttpStorage(): StorageAdapter {
             await request("/api/archive/install", {
                 method: "POST", headers: { "content-type": "application/zip", "x-canvas-client-id": clientId }, body,
             });
-            if (view && install.target.kind === "canvas") await saveArchivePreferences(preferences, install.target.document.id, view);
         },
         pluginFiles: (id) => collection(`plugin-files:${id}`),
         pluginData: (id) => collection(`plugin:${id}`),

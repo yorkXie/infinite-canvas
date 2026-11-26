@@ -32,7 +32,7 @@ export type ArchiveInstall = { target: ArchiveTarget; files: ArchiveFile[] };
 export type WorkArchive = { entries: ArchiveEntry[]; files: ArchiveFile[] };
 const fileSchema = z.object({ resource: archiveResourceSchema, path: id, mime: z.string(), bytes: z.number().int().nonnegative() }).strict();
 const manifest = z.object({ app: z.literal("infinite-canvas"), version: z.literal(4), entries: z.array(entrySchema).nonempty(), files: z.array(fileSchema) }).strict();
-const installation = z.object({ target: targetSchema, files: z.array(fileSchema) }).strict();
+const installation = z.object({ target: targetSchema, files: z.array(fileSchema), preferences: archivePreferencesSchema.optional() }).strict();
 
 export function archiveResourceId(resource: ArchiveResource) {
     return JSON.stringify(resource.collection === "plugin-files" ? [resource.collection, resource.owner, resource.key] : [resource.collection, resource.key]);
@@ -159,14 +159,14 @@ export function decodeWorkArchive(bytes: Uint8Array): WorkArchive {
 
 export async function encodeArchiveInstall(install: ArchiveInstall, preferences?: ArchivePreferences) {
     assertArchiveInstall(install, preferences);
-    return encode("install.json", { target: install.target, files: fileTable(install.files) }, install.files);
+    return encode("install.json", { target: install.target, files: fileTable(install.files), preferences }, install.files);
 }
 
-export function decodeArchiveInstall(bytes: Uint8Array): ArchiveInstall {
+export function decodeArchiveInstall(bytes: Uint8Array): ArchiveInstall & { preferences?: ArchivePreferences } {
     return validateArchiveData(() => {
         const { data, files } = decode(bytes, "install.json", installation);
-        const install = { target: data.target, files };
-        assertArchiveInstall(install);
+        const install = { target: data.target, files, ...(data.preferences && { preferences: data.preferences }) };
+        assertArchiveInstall(install, data.preferences);
         return install;
     });
 }

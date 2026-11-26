@@ -1,3 +1,4 @@
+import { preferenceKeys } from "@workbench/services/storage/preferences";
 import type { CanvasNodeToolbarItem } from "@infinite-canvas/plugin-sdk";
 
 export type ImageToolbarPreferences = {
@@ -11,7 +12,7 @@ export type ImageToolbarPreferences = {
     showLabels: boolean;
 };
 
-export const IMAGE_TOOLBAR_PREFERENCES_KEY = "canvas-image-toolbar-preferences";
+export const IMAGE_TOOLBAR_PREFERENCES_KEY = preferenceKeys.imageToolbar;
 
 export function isImageToolbarToolVisible(tool: Pick<CanvasNodeToolbarItem, "id" | "defaultVisible">, visibility: Record<string, boolean>) {
     return visibility[tool.id] ?? (tool.defaultVisible !== false);

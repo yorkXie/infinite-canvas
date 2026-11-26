@@ -49,18 +49,18 @@ export function ConfigPromptSources({ signal }: { signal: AbortSignal }) {
         ]);
     };
 
-    const saveChange = (write: () => void, failure: string) => {
+    const saveChange = async (write: () => Promise<void>, failure: string) => {
         if (signal.aborted) return false;
         try {
-            write();
-            return true;
+            await write();
+            return !signal.aborted;
         } catch {
             toast.error(failure, workbenchMessageOptions.error);
             return false;
         }
     };
-    const handleSave = (source: PromptSource) => {
-        const saved = saveChange(() => saveSource(source), "来源未保存，请重试。");
+    const handleSave = async (source: PromptSource) => {
+        const saved = await saveChange(() => saveSource(source), "来源未保存，请重试。");
         if (saved) void invalidatePrompts();
         return saved;
     };
@@ -86,7 +86,7 @@ export function ConfigPromptSources({ signal }: { signal: AbortSignal }) {
         try {
             const result = await refreshAllSources();
             let timeSaved = true;
-            try { updateSchedule("lastFetchedAt", new Date().toISOString()); }
+            try { await updateSchedule("lastFetchedAt", new Date().toISOString()); }
             catch { timeSaved = false; }
             await invalidatePrompts();
             if (signal.aborted) return;
@@ -132,8 +132,8 @@ export function ConfigPromptSources({ signal }: { signal: AbortSignal }) {
                     const busy = refreshingSources.includes(source);
                     return (
                         <div key={source.id} className="flex flex-wrap items-center gap-3 rounded-lg border border-border px-4 py-3">
-                            <SettingsNetworkSwitch size="sm" aria-label={`启用${source.name}`} checked={source.enabled} onCheckedChange={(checked) => {
-                                if (saveChange(() => toggleSource(source.id, checked), "来源开关未保存，请重试。")) void invalidatePrompts();
+                            <SettingsNetworkSwitch size="sm" aria-label={`启用${source.name}`} checked={source.enabled} onCheckedChange={async (checked) => {
+                                if (await saveChange(() => toggleSource(source.id, checked), "来源开关未保存，请重试。")) void invalidatePrompts();
                             }} />
                             <div className="min-w-0 flex-[1_1_220px]">
                                 <div className="flex min-w-0 items-center gap-2">
@@ -184,7 +184,7 @@ export function ConfigPromptSources({ signal }: { signal: AbortSignal }) {
                             <AlertDialog.Cancel asChild><Button type="button" variant="outline" aria-label="取消">取 消</Button></AlertDialog.Cancel>
                             <Button type="button" variant="destructive" aria-label="删除" onClick={async () => {
                                 if (!signal.aborted && usePromptSourceStore.getState().sources.includes(deleting.source)) {
-                                    if (!saveChange(() => removeSource(deleting.source.id), "来源未删除，请重试。")) return;
+                                    if (!await saveChange(() => removeSource(deleting.source.id), "来源未删除，请重试。")) return;
                                     await invalidatePrompts();
                                 }
                                 if (!signal.aborted) setDeleting((current) => current === deleting ? null : current);

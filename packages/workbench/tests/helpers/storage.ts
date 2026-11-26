@@ -128,7 +128,7 @@ export function createMemoryStorage(files: Partial<Pick<StorageAdapter, "images"
                 return value;
             },
         },
-        preferences,
+        preferences, promptCache: createMemoryCollection(),
         works: {
             ...createMemoryCollection(works),
             async setItem(key, work) {

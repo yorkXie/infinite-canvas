@@ -112,7 +112,7 @@ export function createBrowserStorage(): StorageAdapter {
                 return value;
             },
         },
-        preferences,
+        preferences, promptCache: app("promptCache"),
         images, previews: app("previews"), media,
         imageRecords: app("imageRecords"), videoRecords: app("videoRecords"), audioRecords: app("audioRecords"),
         agentRecords: app("agentRecords") as StorageCollection,

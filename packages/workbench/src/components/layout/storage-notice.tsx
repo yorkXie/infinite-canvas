@@ -3,6 +3,7 @@ import { Dialog } from "radix-ui";
 import { useEffect, useRef, useState, useSyncExternalStore, type ReactNode } from "react";
 import { useMatch, useNavigate } from "react-router-dom";
 import { Button } from "@infinite-canvas/plugin-sdk/ui/button";
+import { appPreferences } from "@workbench/services/storage/preferences";
 import { getStorageError, subscribeStorageError } from "@workbench/services/storage/status";
 import { channelWrites } from "@workbench/stores/use-config-store";
 import { workspaceConfigWrites } from "@workbench/stores/use-workspace-config-store";
@@ -23,9 +24,9 @@ export function StorageNotice({ children }: { children: (open: boolean) => React
     const deletions = useCanvasStore((state) => state.projectDeletions);
     const [dismissedNotice, setDismissedNotice] = useState("");
     useEffect(() => {
-        const flushSettings = () => Promise.all([channelWrites.flush(), workspaceConfigWrites.flush()]).catch(() => undefined);
+        const flushSettings = () => Promise.all([channelWrites.flush(), workspaceConfigWrites.flush(), appPreferences.flush()]).catch(() => undefined);
         const beforeUnload = (event: BeforeUnloadEvent) => {
-            const savingSettings = channelWrites.saving || workspaceConfigWrites.saving;
+            const savingSettings = channelWrites.saving || workspaceConfigWrites.saving || appPreferences.saving;
             if (savingSettings) void flushSettings();
             if (savingSettings || Object.keys(useCanvasStore.getState().projectDeletions).length || Object.values(useCanvasStore.getState().saveStatus).some((status) => status !== "saved")) {
                 event.preventDefault();

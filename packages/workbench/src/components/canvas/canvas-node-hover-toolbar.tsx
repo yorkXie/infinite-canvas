@@ -1,3 +1,4 @@
+import { appPreferences } from "@workbench/services/storage/preferences";
 import { assetKindLabels } from "@workbench/constant/labels";
 import { useEffect, useMemo, useState, type ReactNode } from "react";
 import { CanvasDialog } from "./canvas-dialog";
@@ -25,7 +26,7 @@ type CanvasNodeHoverToolbarProps = {
 
 export function CanvasNodeHoverToolbar({ node, viewport, onKeep, onLeave, extraTools = [] }: CanvasNodeHoverToolbarProps) {
     const [preferences, setPreferences] = useState<ImageToolbarPreferences>(() => {
-        const stored = window.localStorage.getItem(IMAGE_TOOLBAR_PREFERENCES_KEY);
+        const stored = appPreferences.getItem(IMAGE_TOOLBAR_PREFERENCES_KEY);
         return stored ? JSON.parse(stored) : { visibility: {}, showLabels: false };
     });
     const [draftPreferences, setDraftPreferences] = useState(preferences);
@@ -64,10 +65,12 @@ export function CanvasNodeHoverToolbar({ node, viewport, onKeep, onLeave, extraT
         setDraftPreferences((current) => ({ ...current, visibility: { ...current.visibility, [id]: visible } }));
     };
 
-    const saveImageToolSettings = () => {
-        setPreferences(draftPreferences);
-        window.localStorage.setItem(IMAGE_TOOLBAR_PREFERENCES_KEY, JSON.stringify(draftPreferences));
-        closeImageToolSettings();
+    const saveImageToolSettings = async () => {
+        try {
+            await appPreferences.setItem(IMAGE_TOOLBAR_PREFERENCES_KEY, JSON.stringify(draftPreferences));
+            setPreferences(draftPreferences);
+            closeImageToolSettings();
+        } catch { /* 存储错误由工作台提示，保留草稿供重试。 */ }
     };
 
     return (
