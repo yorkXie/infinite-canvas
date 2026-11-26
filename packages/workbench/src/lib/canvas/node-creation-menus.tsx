@@ -33,7 +33,6 @@ export function registerCanvasCreationMenus(session: CanvasSession, getCanvasCen
                 else if (target.location === "canvas.extensions") choices = listNodeDefinitions().filter((definition) => getNodePluginId(definition.type) !== "builtin");
                 else return items;
                 const position = target.location === "canvas.create" || target.location === "canvas.connectionCreate" ? { ...target.position } : null;
-                const connection = target.location === "canvas.connectionCreate" ? { nodeId: target.nodeId, handleType: target.handleType } : undefined;
                 const actions: PluginMenuItem[] = choices.flatMap((choice) => {
                     const definition = getNodeDefinition(choice.type);
                     if (!definition) return [];
@@ -41,7 +40,14 @@ export function registerCanvasCreationMenus(session: CanvasSession, getCanvasCen
                         id: `create:${choice.type}`, type: "action", title: choice.title, icon: choice.icon, description: choice.description, hidden: choice.showInCreateMenu === false,
                         run: () => {
                             if (getNodeDefinition(choice.type) !== definition) throw new PluginError("PLUGIN_INACTIVE");
-                            return ctx.commands.execute(nodeCreate, { type: choice.type, position: position === null ? { ...getCanvasCenter() } : { ...position }, connection }, { scope: canvas.scope });
+                            return ctx.commands.execute(nodeCreate, {
+                                type: choice.type,
+                                position: position === null ? { ...getCanvasCenter() } : { ...position },
+                                connection: target.location === "canvas.connectionCreate" ? {
+                                    nodeId: target.nodeId,
+                                    handleType: choice.type === CanvasNodeType.Image ? "source" : target.handleType,
+                                } : undefined,
+                            }, { scope: canvas.scope });
                         },
                     }];
                 });
