@@ -26,9 +26,9 @@ import type { UploadedFile } from "@workbench/services/file-storage";
 import { useConfigStore, useEffectiveConfig, type AiConfig } from "@workbench/stores/use-config-store";
 import { useAssetStore } from "@workbench/stores/use-asset-store";
 import { getDataUrlByteSize } from "@workbench/lib/image-utils";
-import { fitImageInNode, fitNodeSize } from "@workbench/lib/canvas/canvas-node-size";
+import { fitNodeSize } from "@workbench/lib/canvas/canvas-node-size";
 import { audioMetadata, buildAudioGenerationMetadata, buildImageGenerationMetadata, createCanvasNode, imageMetadata, videoMetadata } from "@workbench/lib/canvas/canvas-node-factory";
-import { completeBatchImage, imageSlot, primaryImageFields, savedNodeImages } from "@workbench/lib/canvas/node-images";
+import { completeBatchImage, imageSlot, savedNodeImages } from "@workbench/lib/canvas/node-images";
 import { buildGenerationConfig, generationReferences, getGenerationCount, hasResumableVideoTask, isGenerationCanceled, resetWebVideoSubmission, resolveMetadataReferences, sourceNodeReferenceImages } from "@workbench/lib/canvas/canvas-generation-helpers";
 import { buildNodeGenerationContext, buildNodeResponseMessages } from "@workbench/components/canvas/canvas-node-generation";
 import type { CanvasNodeGenerationMode } from "@workbench/components/canvas/canvas-node-prompt-panel";
@@ -735,19 +735,15 @@ export function useNodeGeneration(session: CanvasSession, { setDialogNodeId, cap
                           }
                         : buildImageGenerationMetadata(useReferenceImages ? "edit" : "generation", generationConfig, 1, retryImages);
                     return prev.map((item) => {
-                        if (item.id !== node.id || imageId && !item.metadata?.images?.some((image) => image.id === imageId)) return item;
-                        const makePrimary = !imageId || item.metadata?.primaryImageId === imageId || !(item.metadata?.storageKey || item.metadata?.content);
-                        const images = item.metadata?.images ?? [];
+                        if (item.id !== node.id) return item;
+                        const updated = completeBatchImage(item, retryImage, { allowNewSlot: !imageId });
+                        if (updated === item) return item;
                         return {
-                            ...item,
+                            ...updated,
                             type: CanvasNodeType.Image,
-                            ...(makePrimary ? fitImageInNode(item, uploadedImage.width, uploadedImage.height) : {}),
                             metadata: {
-                                ...item.metadata,
+                                ...updated.metadata,
                                 status: NODE_STATUS_SUCCESS,
-                                ...(makePrimary ? primaryImageFields(retryImage) : {}),
-                                images: images.some((entry) => entry.id === retryImage.id) ? images.map((entry) => entry.id === retryImage.id ? retryImage : entry) : [retryImage, ...images],
-                                primaryImageId: makePrimary ? retryImage.id : item.metadata?.primaryImageId,
                                 prompt,
                                 ...generationMetadata,
                             },

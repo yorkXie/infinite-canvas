@@ -33,13 +33,24 @@ export function savedNodeImages(meta?: CanvasNodeMetadata): CanvasNodeImage[] {
     return [item, ...images];
 }
 
-/** 结果按生成槽位回填。先展示本轮已成功的第一张，用户手动置顶的图保持优先。 */
-export function completeBatchImage(node: CanvasNodeData, image: CanvasNodeImage): CanvasNodeData {
-    const previous = node.metadata?.images;
-    if (!previous?.some((slot) => slot.id === image.id)) return node;
-    const images = previous.map((slot) => slot.id === image.id ? image : slot);
-    const primary = images.find((slot) => slot.status === "success" && (slot.storageKey || slot.content));
+/** 每张成功的新图置顶。恢复任务可能乱序返回，用实际完成时间与手动置顶时间还原顺序。 */
+export function completeBatchImage(node: CanvasNodeData, image: CanvasNodeImage, options: { allowNewSlot?: boolean; recovered?: boolean } = {}): CanvasNodeData {
+    const previous = node.metadata?.images ?? [];
+    const slot = previous.find((item) => item.id === image.id);
+    if (!slot && !options.allowNewSlot) return node;
+    if (options.recovered && slot?.status === "success" && slot.storageKey && slot.storageKey === image.storageKey) return node;
+
+    const newer: CanvasNodeImage[] = [];
+    const others: CanvasNodeImage[] = [];
+    for (const item of previous) {
+        if (item.id === image.id) continue;
+        const movedAt = item.promotedAt ?? item.createdAt;
+        if (options.recovered && image.createdAt !== undefined && movedAt !== undefined && movedAt > image.createdAt && (item.storageKey || item.content)) newer.push(item);
+        else others.push(item);
+    }
+    const images = [...newer, image, ...others];
+    const primary = images[0];
     const metadata = { ...node.metadata, images };
-    if (!primary || (primary.id === node.metadata?.primaryImageId && primary.id !== image.id)) return { ...node, metadata };
+    if (primary.id === node.metadata?.primaryImageId && primary.id !== image.id) return { ...node, metadata };
     return { ...node, ...fitImageInNode(node, primary.naturalWidth, primary.naturalHeight), metadata: { ...metadata, ...primaryImageFields(primary) } };
 }

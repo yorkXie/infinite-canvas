@@ -19,7 +19,7 @@ export function buildImageSlotSelection(node: ReadonlyCanvasNode, slotId: string
     const current = node.metadata?.images ?? [];
     const image = current.find((item) => item.id === slotId);
     if (!image || !image.content && !image.storageKey) throw new PluginError("PLUGIN_NOT_FOUND");
-    const images = [image, ...current.filter((item) => item.id !== slotId)];
+    const images = [{ ...image, promotedAt: Date.now() }, ...current.filter((item) => item.id !== slotId)];
     return { type: "update_node", id: node.id, patch: fitImageInNode(node, image.naturalWidth, image.naturalHeight), metadata: { ...primaryImageMetadata(image), images } };
 }
 

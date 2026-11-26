@@ -51,7 +51,7 @@ function updateRecovered(node: CanvasNodeData, binding: Binding, patch: CanvasNo
     const tasks = keep ? meta.tasks : meta.tasks?.filter((item) => !sameBinding(item, binding));
     const image = binding.slotId && meta.images?.find((slot) => slot.id === binding.slotId);
     if (image && patch.status === "success") {
-        const updated = completeBatchImage(node, { ...image, ...patch, content: patch.content ?? image.content });
+        const updated = completeBatchImage(node, { ...image, ...patch, promotedAt: undefined, content: patch.content ?? image.content }, { recovered: true });
         return { ...updated, metadata: { ...updated.metadata, tasks, status: tasks?.length ? "loading" as const : "success" as const, errorDetails: undefined } };
     }
     const images = binding.slotId ? meta.images?.map((item) => item.id === binding.slotId ? { ...item, ...patch, content: patch.content ?? item.content } : item) : patch.images ?? meta.images;
