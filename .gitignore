@@ -12,6 +12,10 @@ data/
 .idea
 apps/web/dist
 
+# 本地项目协作说明
+AGENTS.md
+!/.agents/skills/vercel-react-best-practices/AGENTS.md
+
 **/dist
 packages/workbench/public/plugins
 apps/cli/agent-instructions.md
