@@ -1,6 +1,6 @@
 import { useEffect, useRef } from "react";
 import { assertModelTaskTarget, ModelExecutionError, modelAssetUrl, type ModelTask, type ModelTaskTarget } from "@infinite-canvas/shared/model-http";
-import { CanvasNodeType, isCanvasTaskBinding, type CanvasNodeData, type CanvasNodeMetadata, type CanvasTaskBinding } from "@infinite-canvas/shared/canvas/schema/canvas";
+import { CanvasNodeType, isCanvasTaskBinding, type CanvasImageModel, type CanvasNodeData, type CanvasNodeMetadata, type CanvasTaskBinding } from "@infinite-canvas/shared/canvas/schema/canvas";
 import { imageMetadata, audioMetadata, videoMetadata } from "@workbench/lib/canvas/canvas-node-factory";
 import { completeBatchImage, imageSlot } from "@workbench/lib/canvas/node-images";
 import { fitImageInNode, fitNodeSize } from "@workbench/lib/canvas/canvas-node-size";
@@ -11,6 +11,7 @@ import type { CanvasSession } from "@workbench/lib/canvas/canvas-session";
 import { prepareImage } from "@workbench/lib/canvas/canvas-session-media";
 import { registerCanvasNodeAsset } from "@workbench/lib/canvas/register-canvas-asset";
 import { emitPluginEvent } from "@workbench/lib/plugins/runtime";
+import { modelOptionName } from "@workbench/stores/use-config-store";
 import { useCanvasStore } from "@workbench/stores/canvas/use-canvas-store";
 
 type Binding = CanvasTaskBinding;
@@ -29,7 +30,7 @@ function hasBinding(nodes: readonly CanvasNodeData[], projectId: string, binding
     return !!node && isCanvasTaskBinding(projectId, node, binding) && !!node.metadata?.tasks?.some((item) => sameBinding(item, binding));
 }
 
-async function resultMetadata(session: CanvasSession, task: ModelTask, signal: AbortSignal): Promise<CanvasNodeMetadata> {
+async function resultMetadata(session: CanvasSession, task: ModelTask, signal: AbortSignal, imageModel?: CanvasImageModel): Promise<CanvasNodeMetadata> {
     if (task.action === "text") {
         if (typeof task.result !== "string") throw new ModelExecutionError("MODEL_RESULT_MISSING");
         return { content: task.result };
@@ -39,7 +40,15 @@ async function resultMetadata(session: CanvasSession, task: ModelTask, signal: A
         if (!asset || asset.collection !== "images" || !asset.key) throw new ModelExecutionError("MODEL_RESULT_MISSING");
         const image = await prepareImage(modelAssetUrl(asset), signal);
         const assetImage = { ...image, url: undefined };
-        return task.target?.slotId ? imageSlot(assetImage, task.target.slotId, task.model, task.updatedAt) : imageMetadata(assetImage, task.model, task.updatedAt);
+        let source = imageModel;
+        const target = task.target;
+        if (!source && target?.page === "canvas" && target.slotId) {
+            // 更新前提交的任务只返回模型名，优先保留对应图片槽里可核实的分组 ID。
+            const slot = session.getSnapshot().nodes.find((node) => node.id === target.nodeId)?.metadata?.images?.find((image) => image.id === target.slotId);
+            if (slot?.model && modelOptionName(slot.model) === task.model) source = { model: slot.model, modelSource: slot.modelSource };
+        }
+        source ??= { model: task.model };
+        return task.target?.slotId ? imageSlot(assetImage, task.target.slotId, source, task.updatedAt) : imageMetadata(assetImage, source, task.updatedAt);
     }
     const asset = task.result;
     if (!asset || typeof asset === "string" || Array.isArray(asset) || asset.collection !== "media" || !asset.key) throw new ModelExecutionError("MODEL_RESULT_MISSING");
@@ -137,7 +146,7 @@ export function useCanvasTasks(session: CanvasSession, cancel: (signal: AbortSig
         assertOwned(item.binding, signal);
         assertModelTaskTarget(snapshot, item.binding.taskId, targetOf(item.binding));
         let result: CanvasNodeMetadata;
-        try { result = await resultMetadata(session, snapshot, signal); }
+        try { result = await resultMetadata(session, snapshot, signal, item.binding.imageModel); }
         catch (error) { return publishFailure(item, signal, error, true); }
         publish(item, signal, { ...result, status: "success", errorDetails: undefined }, false, snapshot.action);
         if (snapshot.action === "image" && !session.signal.aborted) {
@@ -147,11 +156,11 @@ export function useCanvasTasks(session: CanvasSession, cancel: (signal: AbortSig
         return true;
     }
 
-    function options(nodeId: string, sourceId: string, owner: AbortSignal, slotId?: string, slot?: AbortController): ModelRequestOptions {
+    function options(nodeId: string, sourceId: string, owner: AbortSignal, { slotId, slot, imageModel }: { slotId?: string; slot?: AbortController; imageModel?: CanvasImageModel } = {}): ModelRequestOptions {
         const signal = slot ? AbortSignal.any([owner, slot.signal]) : owner;
         if (!models.tasks) return { signal };
         const taskId = crypto.randomUUID();
-        const binding = { taskId, projectId, nodeId, sourceId, slotId };
+        const binding = { taskId, projectId, nodeId, sourceId, slotId, imageModel };
         const item: LiveTask = { binding, signal, owner, slot, terminal: false, restoring: false };
         return {
             taskId, signal, target: targetOf(binding),

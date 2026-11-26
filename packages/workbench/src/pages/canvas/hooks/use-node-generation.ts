@@ -27,7 +27,7 @@ import { useConfigStore, useEffectiveConfig, type AiConfig } from "@workbench/st
 import { useAssetStore } from "@workbench/stores/use-asset-store";
 import { getDataUrlByteSize } from "@workbench/lib/image-utils";
 import { fitNodeSize } from "@workbench/lib/canvas/canvas-node-size";
-import { audioMetadata, buildAudioGenerationMetadata, buildImageGenerationMetadata, createCanvasNode, imageMetadata, videoMetadata } from "@workbench/lib/canvas/canvas-node-factory";
+import { audioMetadata, buildAudioGenerationMetadata, buildImageGenerationMetadata, captureImageModel, createCanvasNode, imageMetadata, videoMetadata } from "@workbench/lib/canvas/canvas-node-factory";
 import { completeBatchImage, imageSlot, primaryImageFields, savedNodeImages } from "@workbench/lib/canvas/node-images";
 import { buildGenerationConfig, generationReferences, getGenerationCount, hasResumableVideoTask, isGenerationCanceled, resetWebVideoSubmission, resolveMetadataReferences, sourceNodeReferenceImages } from "@workbench/lib/canvas/canvas-generation-helpers";
 import { buildNodeGenerationContext, buildNodeResponseMessages } from "@workbench/components/canvas/canvas-node-generation";
@@ -426,13 +426,14 @@ export function useNodeGeneration(session: CanvasSession, { setDialogNodeId, cap
                 try {
                     await commitCanvas([{ type: "update_node", id: nodeId, metadata: { mediaKind: "image", prompt: scene, status: NODE_STATUS_LOADING, errorDetails: undefined } }]);
                     const refs = context.referenceImages;
-                    const options = task.options(nodeId, nodeId, controller.signal);
+                    const imageModel = captureImageModel(imageConfig);
+                    const options = task.options(nodeId, nodeId, controller.signal, { imageModel });
                     const image = refs.length
                         ? await requestEdit({ ...imageConfig, count: "1" }, context.prompt, refs, options).then((items) => items[0])
                         : await requestGeneration({ ...imageConfig, count: "1" }, context.prompt, options).then((items) => items[0]);
                     const applied = await applyImageResult({ nodeId, signal: controller.signal, taskId: options.taskId }, image.dataUrl, (prev, uploaded) => {
                         if (getNodeDefinition(sourceNode.type) !== definition) throw new PluginError("PLUGIN_INACTIVE");
-                        return prev.map((node) => node.id === nodeId && node.type === sourceNode.type ? { ...node, metadata: { ...node.metadata, ...imageMetadata(uploaded, generationConfig.model, Date.now()), prompt: scene, model: generationConfig.model, status: NODE_STATUS_SUCCESS, errorDetails: undefined } } : node);
+                        return prev.map((node) => node.id === nodeId && node.type === sourceNode.type ? { ...node, metadata: { ...node.metadata, ...imageMetadata(uploaded, imageModel, Date.now()), prompt: scene, model: generationConfig.model, status: NODE_STATUS_SUCCESS, errorDetails: undefined } } : node);
                     }, () => { accepted = true; });
                     if (!applied) throw new PluginError("PLUGIN_INACTIVE");
                     if (panel && getNodeDefinition(sourceNode.type) === definition) panel.close();
@@ -485,11 +486,12 @@ export function useNodeGeneration(session: CanvasSession, { setDialogNodeId, cap
                     const referenceImages = [...new Map([...sourceReference, ...generationContext.referenceImages].map((image) => [image.id, image])).values()];
                     const generationType = referenceImages.length ? ("edit" as const) : ("generation" as const);
                     const generationMetadata = buildImageGenerationMetadata(generationType, generationConfig, count, referenceImages);
+                    const imageModel = captureImageModel(generationConfig);
                     const imageIds = Array.from({ length: count }, () => nanoid());
                     const history = keepImageHistory ? savedNodeImages(sourceNode.metadata) : [];
                     begin({
                         ...generationMetadata,
-                        images: [...imageIds.map((id) => ({ id, status: NODE_STATUS_LOADING, content: "", naturalWidth: 0, naturalHeight: 0, bytes: 0, mimeType: "", model: generationConfig.model })), ...history],
+                        images: [...imageIds.map((id) => ({ id, status: NODE_STATUS_LOADING, content: "", naturalWidth: 0, naturalHeight: 0, bytes: 0, mimeType: "", ...imageModel })), ...history],
                         ...primaryImageFields(),
                     });
                     generationRequestsRef.current.get(rootId)!.mediaTarget = { revision: session.getSnapshot().revision, type: CanvasNodeType.Image, originType: sourceNode.type };
@@ -500,7 +502,7 @@ export function useNodeGeneration(session: CanvasSession, { setDialogNodeId, cap
                     const completed = await Promise.allSettled(
                         imageIds.map(async (imageId) => {
                             const slot = new AbortController();
-                            const options = task.options(rootId, nodeId, controller.signal, imageId, slot);
+                            const options = task.options(rootId, nodeId, controller.signal, { slotId: imageId, slot, imageModel });
                             const signal = options.signal!;
                             const check = () => {
                                 if (!session.getSnapshot().nodes.find((item) => item.id === rootId)?.metadata?.images?.some((image) => image.id === imageId)) slot.abort(new PluginError("PLUGIN_INACTIVE"));
@@ -514,7 +516,7 @@ export function useNodeGeneration(session: CanvasSession, { setDialogNodeId, cap
                                     ? await requestEdit({ ...generationConfig, count: "1" }, effectivePrompt, referenceImages, options).then((items) => items[0])
                                     : await requestGeneration({ ...generationConfig, count: "1" }, effectivePrompt, options).then((items) => items[0]);
                                 const applied = await applyImageResult({ nodeId: rootId, signal, taskId: options.taskId }, image.dataUrl, (prev, uploaded) => {
-                                    const item = imageSlot(uploaded, imageId, generationConfig.model, Date.now());
+                                    const item = imageSlot(uploaded, imageId, imageModel, Date.now());
                                     return prev.map((node) => node.id === rootId ? completeBatchImage(node, item) : node);
                                 }, () => { accepted = true; resultAccepted = true; });
                                 if (!applied) throw new PluginError("PLUGIN_INACTIVE");
@@ -580,7 +582,7 @@ export function useNodeGeneration(session: CanvasSession, { setDialogNodeId, cap
                     textIds.map(async (textId): Promise<CanvasNodeText | null> => {
                         let streamed = "";
                         try {
-                            const options = task.options(rootId, nodeId, controller.signal, textId);
+                            const options = task.options(rootId, nodeId, controller.signal, { slotId: textId });
                             const answer = await requestImageQuestion(
                                 generationConfig,
                                 buildNodeResponseMessages({ ...generationContext, prompt: effectivePrompt }),
@@ -767,13 +769,14 @@ export function useNodeGeneration(session: CanvasSession, { setDialogNodeId, cap
                     return;
                 }
 
-                const options = task.options(node.id, node.id, controller.signal, imageId);
+                const imageModel = captureImageModel(generationConfig);
+                const options = task.options(node.id, node.id, controller.signal, { slotId: imageId, imageModel });
                 const singleImageConfig = { ...generationConfig, count: "1" };
                 const image = useReferenceImages
                     ? await requestEdit(singleImageConfig, prompt, retryImages, options).then((items) => items[0])
                     : await requestGeneration(singleImageConfig, prompt, options).then((items) => items[0]);
                 const applied = await applyImageResult({ nodeId: node.id, signal: controller.signal, taskId: options.taskId }, image.dataUrl, (prev, uploadedImage) => {
-                    const retryImage = imageSlot(uploadedImage, imageId || node.metadata?.primaryImageId || nanoid(), generationConfig.model, Date.now());
+                    const retryImage = imageSlot(uploadedImage, imageId || node.metadata?.primaryImageId || nanoid(), imageModel, Date.now());
                     const generationMetadata = savedImageMetadata?.generationType
                         ? {
                               generationType: savedImageMetadata.generationType,

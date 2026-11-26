@@ -5,7 +5,7 @@ import { getPluginErrorMessage } from "@infinite-canvas/shared/plugins";
 import { Button } from "@infinite-canvas/plugin-sdk/ui/button";
 import { ImageThumbnail } from "@workbench/components/image-thumbnail";
 import { workbenchMessageOptions } from "@workbench/components/ui/sonner";
-import { modelOptionName } from "@workbench/stores/use-config-store";
+import { decodeGroupModel, findModelGroup, modelOptionName, useConfigStore } from "@workbench/stores/use-config-store";
 
 type DetailsProps = {
     node?: CanvasNodeData;
@@ -19,6 +19,11 @@ export function CanvasImageDetails({ node, preview, onView, onPrimary, onDownloa
     const meta = node?.metadata;
     const images = meta?.images?.filter((image) => image.storageKey || image.content) ?? [];
     const selected = images.find((image) => image.id === preview.slotId);
+    const channels = useConfigStore((state) => state.config.channels);
+    const decoded = selected?.model && decodeGroupModel(selected.model);
+    const group = !selected?.modelSource && decoded ? findModelGroup(channels, decoded.groupId) : undefined;
+    const source = selected?.modelSource ?? (group && { channelName: group.channel.name, groupName: group.group.name });
+    const modelName = selected?.model ? modelOptionName(selected.model) : "模型未记录";
     const width = selected?.naturalWidth ?? meta?.naturalWidth;
     const height = selected?.naturalHeight ?? meta?.naturalHeight;
     const primary = selected?.id === (meta?.primaryImageId ?? images[0]?.id);
@@ -38,7 +43,7 @@ export function CanvasImageDetails({ node, preview, onView, onPrimary, onDownloa
         <aside className="flex min-w-0 flex-wrap items-start gap-3 overflow-auto border-t border-current/15 pt-3 text-sm sm:w-40 sm:flex-col sm:flex-nowrap sm:border-t-0 sm:border-l sm:pt-0 sm:pl-4">
             <dl className="flex flex-wrap gap-3 sm:flex-col">
                 {!!width && !!height && <div><dt className="text-xs opacity-60">分辨率</dt><dd className="tabular-nums">{width} × {height}</dd></div>}
-                {selected?.model && <div><dt className="text-xs opacity-60">生成模型</dt><dd className="break-all">{modelOptionName(selected.model)}</dd></div>}
+                <div><dt className="text-xs opacity-60">生成模型</dt><dd className="break-all">{modelName}（{source ? `${source.channelName}-${source.groupName}` : "渠道 / 分组未记录"}）</dd></div>
                 {selected?.createdAt !== undefined && <div><dt className="text-xs opacity-60">生成时间</dt><dd>{new Date(selected.createdAt).toLocaleString()}</dd></div>}
             </dl>
             {selected && <Button type="button" variant="ghost" size="sm" disabled={primary} onClick={() => void onPrimary(selected.id).catch(reportError)}>

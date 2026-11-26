@@ -12,10 +12,15 @@ export type CanvasNodeStatus = z.infer<typeof nodeStatusSchema>;
 export const generationModeSchema = z.enum(["text", "image", "video", "audio"]);
 export type CanvasGenerationMode = z.infer<typeof generationModeSchema>;
 export type CanvasImageGenerationType = "generation" | "edit";
+const imageModelSchema = z.object({
+    model: z.string(),
+    modelSource: z.object({ channelName: z.string(), groupName: z.string() }).optional(),
+});
+export type CanvasImageModel = z.infer<typeof imageModelSchema>;
 export const nodeImageSchema = z.object({
     id: z.string(), status: nodeStatusSchema, errorDetails: z.string().optional(), content: z.string(),
     storageKey: z.string().optional(), naturalWidth: z.number(), naturalHeight: z.number(), bytes: z.number(), mimeType: z.string(),
-    model: z.string().optional(), createdAt: z.number().optional(), promotedAt: z.number().optional(),
+    ...imageModelSchema.partial().shape, createdAt: z.number().optional(), promotedAt: z.number().optional(),
 });
 export type CanvasNodeImage = z.infer<typeof nodeImageSchema>;
 export const nodeTextSchema = z.object({ id: z.string(), status: nodeStatusSchema, errorDetails: z.string().optional(), content: z.string() });
@@ -80,7 +85,7 @@ export const nodeMetadataSchema = z.object({
     mimeType: z.string().optional(),
     bytes: z.number().optional(),
     durationMs: z.number().optional(),
-    tasks: z.array(z.object({ taskId: z.string(), projectId: z.string(), nodeId: z.string(), slotId: z.string().optional(), sourceId: z.string() })).optional(),
+    tasks: z.array(z.object({ taskId: z.string(), projectId: z.string(), nodeId: z.string(), slotId: z.string().optional(), sourceId: z.string(), imageModel: imageModelSchema.optional() })).optional(),
     webVideoSubmissionId: z.string().min(1).optional(),
     webVideoTask: webVideoTaskSchema.optional(),
     groupId: z.string().optional(),

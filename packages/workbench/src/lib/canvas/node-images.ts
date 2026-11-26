@@ -1,14 +1,14 @@
 import { nanoid } from "nanoid";
-import type { CanvasNodeData, CanvasNodeImage, CanvasNodeMetadata } from "@infinite-canvas/shared/canvas/schema/canvas";
+import type { CanvasImageModel, CanvasNodeData, CanvasNodeImage, CanvasNodeMetadata } from "@infinite-canvas/shared/canvas/schema/canvas";
 import type { UploadedImage } from "@workbench/services/image-storage";
 import { fitImageInNode } from "./canvas-node-size";
 
-export function imageSlot(image: Omit<UploadedImage, "url"> & { url?: string }, id: string, model?: string, createdAt?: number): CanvasNodeImage {
-    return { id, content: image.url ?? "", storageKey: image.storageKey, status: "success", naturalWidth: image.width, naturalHeight: image.height, bytes: image.bytes, mimeType: image.mimeType, model, createdAt };
+export function imageSlot(image: Omit<UploadedImage, "url"> & { url?: string }, id: string, imageModel?: CanvasImageModel, createdAt?: number): CanvasNodeImage {
+    return { id, content: image.url ?? "", storageKey: image.storageKey, status: "success", naturalWidth: image.width, naturalHeight: image.height, bytes: image.bytes, mimeType: image.mimeType, ...imageModel, createdAt };
 }
 
-export function imageMetadata(image: Omit<UploadedImage, "url"> & { url?: string }, model?: string, createdAt?: number): CanvasNodeMetadata {
-    const item = imageSlot(image, nanoid(), model, createdAt);
+export function imageMetadata(image: Omit<UploadedImage, "url"> & { url?: string }, imageModel?: CanvasImageModel, createdAt?: number): CanvasNodeMetadata {
+    const item = imageSlot(image, nanoid(), imageModel, createdAt);
     return { ...primaryImageFields(item), status: "success", images: [item] };
 }
 

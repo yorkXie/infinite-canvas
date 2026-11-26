@@ -1,10 +1,10 @@
 import { NODE_DEFAULT_SIZE } from "@infinite-canvas/shared/canvas/schema/node-specs";
 import { getNodeSpec } from "@workbench/constant/canvas";
 import { nodeSizeFromRatio } from "@workbench/lib/canvas/canvas-node-size";
-import type { AiConfig } from "@workbench/stores/use-config-store";
+import { findGroupModel, type AiConfig } from "@workbench/stores/use-config-store";
 import type { UploadedFile } from "@workbench/services/file-storage";
 import type { ReferenceImage } from "@workbench/types/image";
-import { CanvasNodeType, type CanvasImageGenerationType, type CanvasMediaReference, type CanvasNodeData, type CanvasNodeMetadata, type CanvasNodeTypeId, type Position } from "@infinite-canvas/shared/canvas/schema/canvas";
+import { CanvasNodeType, type CanvasImageModel, type CanvasImageGenerationType, type CanvasMediaReference, type CanvasNodeData, type CanvasNodeMetadata, type CanvasNodeTypeId, type Position } from "@infinite-canvas/shared/canvas/schema/canvas";
 
 export { imageMetadata } from "./node-images";
 
@@ -44,6 +44,12 @@ export function canvasMediaReferences(kind: CanvasMediaReference["kind"], items:
         }
     }
     return references;
+}
+
+export function captureImageModel(config: AiConfig): CanvasImageModel {
+    const model = config.model || config.imageModel;
+    const target = findGroupModel(config, model);
+    return target ? { model, modelSource: { channelName: target.channel.name, groupName: target.group.name } } : { model };
 }
 
 export function buildImageGenerationMetadata(type: CanvasImageGenerationType, config: AiConfig, count: number, references: ReferenceImage[]): CanvasNodeMetadata {
