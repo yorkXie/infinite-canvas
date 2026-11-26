@@ -14,6 +14,9 @@ import { useThemeStore } from "@workbench/stores/use-theme-store";
 import { Button } from "@infinite-canvas/plugin-sdk/ui/button";
 import { Dialog } from "radix-ui";
 import { CanvasDialog } from "@workbench/components/canvas/canvas-dialog";
+import { CanvasImageDetails } from "@workbench/components/canvas/canvas-image-details";
+import { buildImageSlotSelection } from "@workbench/components/canvas/nodes/image-transactions";
+import { currentNodeImage } from "@workbench/lib/canvas/node-images";
 import { toast } from "sonner";
 import { workbenchMessageOptions } from "@workbench/components/ui/sonner";
 import { ActiveConnectionPath, ConnectionPath } from "@workbench/components/canvas/canvas-connections";
@@ -88,7 +91,7 @@ type ConnectionDropTarget = {
     isNearNode: boolean;
 };
 
-type ImagePreviewRecord = { nodeId: string; title: string; url?: string; close: () => void };
+type ImagePreviewRecord = { nodeId: string; slotId?: string; title: string; url?: string; close: () => void };
 
 const CONNECTION_HANDLE_HIT_RADIUS = 40;
 const CONNECTION_NODE_HIT_PADDING = 32;
@@ -274,10 +277,12 @@ function InfiniteCanvasPage({ project, session }: { project: CanvasProject; sess
         };
         const contributions: PluginCommand<{ nodeId: string; slotId?: string }, void>[] = [
             { command: nodePreviewImage, title: "预览图片", enabled: (input, context) => resolve(input, context).media.kind === "image", run: async (input, context) => {
-                const access = capture(input, context);
+                const node = context.canvas?.getNodes().find((item) => item.id === input.nodeId);
+                const slotId = input.slotId ?? (node?.type === CanvasNodeType.Image ? currentNodeImage(node.metadata)?.id : undefined);
+                const access = capture({ ...input, slotId }, context);
                 if (access.media.kind !== "image") { access.close(); throw new PluginError("PLUGIN_NOT_FOUND"); }
                 let closed = false;
-                const record: ImagePreviewRecord = { nodeId: input.nodeId, title: access.node.title || "图片", close: () => {
+                const record: ImagePreviewRecord = { nodeId: input.nodeId, slotId, title: access.node.title || "图片", close: () => {
                     if (closed) return;
                     closed = true;
                     access.signal.removeEventListener("abort", record.close);
@@ -295,7 +300,11 @@ function InfiniteCanvasPage({ project, session }: { project: CanvasProject; sess
                     access.signal.throwIfAborted();
                     record.url = URL.createObjectURL(blob);
                     setImagePreview({ ...record });
-                } catch (error) { record.close(); throw error; }
+                } catch (error) {
+                    if (closed) return;
+                    record.close();
+                    throw error;
+                }
             } },
         ];
         const disposers: (() => void)[] = [bindHostActions(session, { nodeDownloadResource: async (input, context) => {
@@ -1229,10 +1238,17 @@ function InfiniteCanvasPage({ project, session }: { project: CanvasProject; sess
 
                 {imageEditors}
 
-                <CanvasDialog title="图片详情" open={Boolean(imagePreview)} onClose={() => imagePreview?.close()}>
-                    <div className="flex max-h-[80vh] items-center justify-center">
-                        {imagePreview?.url ? <img src={imagePreview.url} alt={imagePreview.title} className="max-h-[80vh] max-w-full object-contain" /> : imagePreview && <span className="p-6">正在读取图片…</span>}
-                    </div>
+                <CanvasDialog title="图片详情" width={1100} open={Boolean(imagePreview)} onClose={() => imagePreview?.close()}>
+                    {imagePreview && <CanvasImageDetails
+                        node={nodeById.get(imagePreview.nodeId)} preview={imagePreview}
+                        onView={(slotId) => executeCommand(nodePreviewImage, { nodeId: imagePreview.nodeId, slotId }, commandOptions)}
+                        onPrimary={async (slotId) => {
+                            const node = nodesRef.current.find((item) => item.id === imagePreview.nodeId);
+                            if (!node) throw new PluginError("PLUGIN_NOT_FOUND");
+                            await executeCommand(canvasApply, { ops: [buildImageSlotSelection(node, slotId)] }, commandOptions);
+                        }}
+                        onDownload={() => hostActions.nodeDownloadResource({ nodeId: imagePreview.nodeId, slotId: imagePreview.slotId }, session.signal)}
+                    />}
                 </CanvasDialog>
 
                 {stopConfirmation && <CanvasDialog key={stopConfirmation.id} title="停止生成？" description="当前生成请求会被中断，已经生成完成的内容会保留。" open onClose={stopConfirmation.cancel}>
