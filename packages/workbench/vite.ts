@@ -66,7 +66,11 @@ export function workbenchViteConfig(rootUrl: URL) {
         css: { postcss: { plugins: [tailwindcss()] } },
         base: process.env.VITE_BASE || "/",
         // 按实际请求转换，避免停止服务时等待已被取消的后台预转换。
-        server: { preTransformRequests: false },
+        server: {
+            preTransformRequests: false,
+            fs: { deny: [".env", ".env.*", "*.{crt,pem}", "**/.git/**", "**/infinite-canvas-1.0-data/**"] },
+            watch: { ignored: ["**/infinite-canvas-1.0-data/**"] },
+        },
         plugins: [react(), localPluginsManifest()],
         resolve: {
             dedupe: ["react", "react-dom"],

@@ -7,7 +7,7 @@ pnpm install --frozen-lockfile
 pnpm dev:desktop
 ```
 
-桌面版通过 Electron 窗口打开 CLI 工作台，源码开发直接使用 CLI 的 Vite 热更新。默认使用与 CLI 相同的 `~/.infinite-canvas/workspace` 和端口 17371。使用其他工作区可运行 `pnpm dev:desktop --data-dir /绝对路径 --port 17372`。同一工作区只能由一个服务打开；先退出 CLI 或桌面版，再切换入口。
+桌面版通过 Electron 窗口打开 CLI 工作台，源码开发直接使用 CLI 的 Vite 热更新。从仓库启动时与 CLI 共用根目录下的 `infinite-canvas-1.0-data/`，安装版使用 `~/.infinite-canvas/workspace`。默认端口为 17371。使用其他工作区可运行 `pnpm dev:desktop --data-dir /绝对路径 --port 17372`。同一工作区只能由一个服务打开；先退出 CLI 或桌面版，再切换入口。
 
 项目、素材、模型渠道、插件和 MCP 连接都由同一个本地服务处理。窗口关闭且允许离开后，桌面版等待服务退出并释放目录。关闭窗口时，如果画布或设置仍在保存，可以返回工作台等待，或选择放弃修改。
 

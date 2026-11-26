@@ -5,6 +5,7 @@
 .idea
 docs2
 data
+infinite-canvas-1.0-data
 apps/docs/.next
 apps/docs/.source
 apps/docs/node_modules

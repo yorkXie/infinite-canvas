@@ -155,7 +155,7 @@ pnpm install --frozen-lockfile
 pnpm dev --open
 ```
 
-默认启动 CLI 本地工作台，支持源码热更新，无需先构建。桌面版使用 `pnpm dev:desktop`，与 CLI 共用工作区和插件；纯 Web 使用 `pnpm dev:web`。CLI 选项与数据目录见 [本地开发文档](apps/docs/content/docs/development/local-development.mdx)。
+源码启动的 CLI 和桌面版默认共用仓库根目录下的 `infinite-canvas-1.0-data/`，可用 `--data-dir` 指定其他目录。桌面版使用 `pnpm dev:desktop`，纯 Web 使用 `pnpm dev:web`。CLI 选项见 [本地开发文档](apps/docs/content/docs/development/local-development.mdx)。
 
 ### 构建桌面版
 

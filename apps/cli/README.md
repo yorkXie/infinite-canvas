@@ -18,10 +18,10 @@ npx -y @basketikun/infinite-canvas@latest serve --data-dir ~/Canvas --open
 
 ```bash
 pnpm install --frozen-lockfile
-pnpm dev --data-dir ~/Canvas --open
+pnpm dev --open
 ```
 
-界面由 Vite 热更新，服务由 tsx watch 自动重启，无需预先构建。页面、热更新和本地请求共用一个端口。
+源码版默认使用仓库根目录下的 `infinite-canvas-1.0-data/`，首次启动会建立工作区。显式传入 `--data-dir` 时使用指定目录。界面由 Vite 热更新，服务由 tsx watch 自动重启。
 
 按 Ctrl+C 停止，服务会完成已接受的写入并释放目录锁。两个进程不能同时写同一目录；同一目录的服务已在运行时，再次执行 `serve` 会直接使用已有服务，加 `--open` 时打开它的页面。异常退出时系统也会自动释放目录锁，可直接重新启动；不要删除 `.canvas.lock` 文件。
 

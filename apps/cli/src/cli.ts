@@ -1,5 +1,6 @@
 import { runPluginCommand } from "./plugins.js";
 import path from "node:path";
+import { existsSync } from "node:fs";
 import { homedir } from "node:os";
 import { readFile, writeFile } from "node:fs/promises";
 import { fileURLToPath } from "node:url";
@@ -13,9 +14,13 @@ import { StorageError } from "@infinite-canvas/shared/storage-data";
 export async function runCli(web: LocalWeb, entryUrl: string) {
     const desktop = process.env.INFINITE_CANVAS_DESKTOP_HOST === "1" && typeof process.send === "function";
     try {
+        const repoRoot = fileURLToPath(new URL("../../../", entryUrl));
+        const defaultDirectory = existsSync(path.join(repoRoot, "apps", "cli", "package.json"))
+            ? path.join(repoRoot, "infinite-canvas-1.0-data")
+            : path.join(homedir(), ".infinite-canvas", "workspace");
         const { values, positionals } = parseArgs({
             allowPositionals: true,
-            options: { registry: { type: "string" }, "data-dir": { type: "string", default: path.join(homedir(), ".infinite-canvas", "workspace") }, port: { type: "string", default: String(DEFAULT_PORT) }, open: { type: "boolean" }, "skip-plugins": { type: "boolean" }, help: { type: "boolean", short: "h" }, debug: { type: "boolean" } },
+            options: { registry: { type: "string" }, "data-dir": { type: "string", default: defaultDirectory }, port: { type: "string", default: String(DEFAULT_PORT) }, open: { type: "boolean" }, "skip-plugins": { type: "boolean" }, help: { type: "boolean", short: "h" }, debug: { type: "boolean" } },
         });
         if (values.help) {
             console.log("用法：infinite-canvas serve [--data-dir <目录>] [--port <端口>] [--open] [--skip-plugins]\n      infinite-canvas mcp\n      infinite-canvas plugin add|update|remove|enable|disable|list|registry\n\nserve 启动画布并把业务数据保存在目录中；mcp 连接已启动的服务。\n--skip-plugins 本次跳过第三方插件启动，保留数据和启用选择，可在插件设置中逐个重新启用。\n需要 Node.js 22 或更高版本。按 Ctrl+C 停止服务。");
