@@ -2449,6 +2449,25 @@ function InfiniteCanvasPage() {
                     const parentConfig = NODE_DEFAULT_SIZE[isConfigNode ? CanvasNodeType.Config : isImageNode ? CanvasNodeType.Image : CanvasNodeType.Text];
                     const imageConfig = NODE_DEFAULT_SIZE[CanvasNodeType.Image];
                     const parentPosition = sourceNode?.position || { x: 0, y: 0 };
+                    // 保留历史：先把能保住的旧图收集起来
+                    const previousImages: CanvasNodeImage[] = keepHistory && isImageNode ? (sourceNode?.metadata?.images ?? []).filter((image) => Boolean(image.content)) : [];
+                    // 局部编辑 / 粘贴 / 放大等节点只有节点级 content，没有 images[]：
+                    // 补一张进去，否则一模一样的内容重生一次就再也找不回来了。
+                    const legacyContent = sourceNode?.metadata?.content;
+                    if (keepHistory && isImageNode && legacyContent && !previousImages.some((image) => image.content === legacyContent)) {
+                        const legacyMeta = sourceNode?.metadata;
+                        previousImages.push({
+                            id: nanoid(),
+                            status: NODE_STATUS_SUCCESS,
+                            content: legacyContent,
+                            storageKey: legacyMeta?.storageKey,
+                            naturalWidth: legacyMeta?.naturalWidth || 0,
+                            naturalHeight: legacyMeta?.naturalHeight || 0,
+                            bytes: legacyMeta?.bytes || 0,
+                            mimeType: legacyMeta?.mimeType || "",
+                            createdAt: Date.now() - 1,
+                        });
+                    }
                     const rootId = reuseImageNode ? nodeId : nanoid();
                     const imageIds = Array.from({ length: count }, () => nanoid());
                     pendingChildIds = [rootId];
@@ -2471,9 +2490,7 @@ function InfiniteCanvasPage() {
                                 ...imageIds.map((id) => ({ id, status: NODE_STATUS_LOADING, content: "", naturalWidth: 0, naturalHeight: 0, bytes: 0, mimeType: "" })),
 
                                 // 保留历史模式：旧图接在后面（只留真正有内容的）
-                                ...(keepHistory && isImageNode
-                                    ? (sourceNode?.metadata?.images ?? []).filter((image) => Boolean(image.content))
-                                    : []),
+                                ...previousImages,
                             ],
                             primaryImageId: undefined,
                             ...generationMetadata,
