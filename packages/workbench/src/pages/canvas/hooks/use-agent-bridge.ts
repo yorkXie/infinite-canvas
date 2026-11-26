@@ -1,4 +1,4 @@
-import { useCallback, useLayoutEffect, useMemo, useSyncExternalStore, type Dispatch, type SetStateAction } from "react";
+import { useCallback, useLayoutEffect, useMemo, useRef, useSyncExternalStore, type Dispatch, type SetStateAction } from "react";
 import { useAgentStore } from "@workbench/stores/use-agent-store";
 import type { CanvasAgentOp } from "@infinite-canvas/shared/canvas/tools/types";
 import { executeCanvasAgentOps, type CanvasAgentSnapshot } from "@workbench/lib/canvas/canvas-agent-ops";
@@ -8,19 +8,22 @@ import type { ContextMenuState } from "@workbench/types/canvas";
 type AgentBridgeParams = {
     session: CanvasSession;
     title: string;
+    viewportSize: { width: number; height: number };
     setContextMenu: Dispatch<SetStateAction<ContextMenuState | null>>;
 };
 
 /** 工具先准备完整批次，再向发起时的项目会话提交一次事务。 */
-export function useAgentBridge({ session, title, setContextMenu }: AgentBridgeParams) {
+export function useAgentBridge({ session, title, viewportSize, setContextMenu }: AgentBridgeParams) {
+    const sizeRef = useRef(viewportSize);
+    useLayoutEffect(() => { sizeRef.current = viewportSize; }, [viewportSize]);
     const snapshot = useSyncExternalStore(session.subscribe, session.getSnapshot);
     const setAgentCanvasContext = useAgentStore((state) => state.setCanvasContext);
-    const agentSnapshot = useMemo<CanvasAgentSnapshot>(() => ({ projectId: session.projectId, title, nodes: snapshot.nodes, connections: snapshot.connections, selectedNodeIds: snapshot.selection.nodeIds, viewport: snapshot.viewport }), [session, snapshot, title]);
+    const agentSnapshot = useMemo<CanvasAgentSnapshot>(() => ({ projectId: session.projectId, title, nodes: snapshot.nodes, connections: snapshot.connections, selectedNodeIds: snapshot.selection.nodeIds, viewport: snapshot.viewport, viewportSize }), [session, snapshot, title, viewportSize]);
     const applyAgentOps = useCallback(async (ops: CanvasAgentOp[] = []) => {
         const snapshot = await executeCanvasAgentOps(session, title, ops);
         session.signal.throwIfAborted();
         setContextMenu(null);
-        return snapshot;
+        return { ...snapshot, viewportSize: sizeRef.current };
     }, [session, setContextMenu, title]);
     useLayoutEffect(() => {
         if (!session.signal.aborted) setAgentCanvasContext({ signal: session.signal, snapshot: agentSnapshot, applyOps: applyAgentOps });

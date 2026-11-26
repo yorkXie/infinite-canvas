@@ -26,7 +26,7 @@ export function compactCanvasState(state: CanvasSnapshot, input: StateFilter = {
     const ids = new Set(nodes.map((node) => node.id));
     return {
         projectId: state.projectId, title: state.title, nodeCount: state.nodes.length, matchedCount: matched.length, ...(matched.length > (input.offset ?? 0) + nodes.length ? { truncated: true, nextOffset: (input.offset ?? 0) + nodes.length } : {}),
-        selectedNodeIds: state.selectedNodeIds, viewport: state.viewport,
+        selectedNodeIds: state.selectedNodeIds, viewport: state.viewport, viewportSize: state.viewportSize,
         nodes: compactNodes(nodes, state.nodes),
         ...(input.includeConnections === false ? {} : { connections: state.connections.filter((edge) => ids.has(edge.fromNodeId) || ids.has(edge.toNodeId)) }),
     };

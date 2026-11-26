@@ -1,3 +1,4 @@
+import { buildImageSlotSelection } from "@workbench/components/canvas/nodes/image-transactions";
 import { nanoid } from "nanoid";
 import { applyOps, type CanvasDocumentOp } from "@infinite-canvas/shared/canvas/ops/apply";
 import { CanvasNodeType, type CanvasConnection, type CanvasNodeData } from "@infinite-canvas/shared/canvas/schema/canvas";
@@ -18,6 +19,7 @@ export type CanvasAgentSnapshot = {
     connections: CanvasConnection[];
     selectedNodeIds: string[];
     viewport: ViewportTransform;
+    viewportSize?: { width: number; height: number };
 };
 
 const NODE_GAP = 40;
@@ -54,6 +56,12 @@ export function prepareCanvasAgentOps(snapshot: CanvasAgentSnapshot, ops: Canvas
         } else if (op.type === "group_nodes") {
             documentOp = { ...op, id: op.id ?? nanoid(), title: op.title ?? "组" };
             selectedNodeIds = [documentOp.id];
+        } else if (op.type === "update_node" && op.selectImageId !== undefined) {
+            const node = graph.nodes.find((item) => item.id === op.id);
+            if (!node || node.type !== CanvasNodeType.Image || typeof op.selectImageId !== "string" || op.metadata || op.patch) throw new Error("INVALID_ARGUMENTS");
+            const selection = buildImageSlotSelection(node, op.selectImageId);
+            if (selection.type !== "update_node") throw new Error("INVALID_ARGUMENTS");
+            documentOp = { type: "update_node", id: node.id, metadata: selection.metadata };
         } else if (op.type === "connect_nodes") {
             documentOp = { type: "connect_nodes", connection: { id: op.id ?? nanoid(), fromNodeId: op.fromNodeId, toNodeId: op.toNodeId } };
         } else if (op.type === "delete_node") {

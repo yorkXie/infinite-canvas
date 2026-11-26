@@ -176,7 +176,7 @@ function InfiniteCanvasPage({ project, session }: { project: CanvasProject; sess
     const setViewport = useCallback((value: SetStateAction<ViewportTransform>) => {
         void executeCommand(canvasViewport, typeof value === "function" ? value(session.getSnapshot().viewport) : value, commandOptions).catch((error) => { if (!session.signal.aborted) void toast.error(getPluginErrorMessage(error), workbenchMessageOptions.error); });
     }, [commandOptions, session]);
-    const [size, setSize] = useState({ width: 1200, height: 720 });
+    const [size, setSize] = useState({ width: 0, height: 0 });
     const selectedNodeIds = useMemo(() => new Set(snapshot.selection.nodeIds), [snapshot.selection.nodeIds]);
     const selectedConnectionId = snapshot.selection.connectionId;
     const setSelectedNodeIds = useCallback((value: SetStateAction<Set<string>>) => {
@@ -369,7 +369,7 @@ function InfiniteCanvasPage({ project, session }: { project: CanvasProject; sess
         selectionBoxRef.current = selectionBox;
     }, [selectionBox]);
 
-    useEffect(() => {
+    useLayoutEffect(() => {
         const el = containerRef.current;
         if (!el) return;
 
@@ -567,6 +567,7 @@ function InfiniteCanvasPage({ project, session }: { project: CanvasProject; sess
     }, [nodes, connections, referencePickerNodeId]);
     useAgentBridge({
         session,
+        viewportSize: size,
         title: currentProject?.title ?? project.title,
         setContextMenu,
     });

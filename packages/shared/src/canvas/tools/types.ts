@@ -5,12 +5,12 @@ export type { Position, CanvasConnection };
 export type Viewport = { x: number; y: number; k: number };
 export type CanvasNodeType = `${BuiltinNodeType}`;
 export type CanvasNode = { id: string; type: string; title?: string; position: Position; width: number; height: number; metadata?: Record<string, unknown> };
-export type CanvasSnapshot = { projectId: string; title: string; nodes: CanvasNode[]; connections: CanvasConnection[]; selectedNodeIds: string[]; viewport: Viewport; clientId?: string };
+export type CanvasSnapshot = { projectId: string; title: string; nodes: CanvasNode[]; connections: CanvasConnection[]; selectedNodeIds: string[]; viewport: Viewport; viewportSize?: { width: number; height: number }; clientId?: string };
 export type CanvasPresence = Pick<CanvasSnapshot, "projectId" | "title">;
 
 export type CanvasAgentOp =
     | { type: "add_node"; id?: string; nodeType?: CanvasNodeTypeId; title?: string; position?: { x: number; y: number }; x?: number; y?: number; width?: number; height?: number; metadata?: CanvasNodeMetadata }
-    | { type: "update_node"; id: string; patch?: Partial<CanvasNodeData>; metadata?: CanvasNodeMetadata }
+    | { type: "update_node"; id: string; selectImageId?: string; patch?: Partial<CanvasNodeData>; metadata?: CanvasNodeMetadata }
     | { type: "move_nodes"; items: Array<{ id: string; x?: number; y?: number; dx?: number; dy?: number }> }
     | { type: "group_nodes"; ids: string[]; id?: string; title?: string }
     | { type: "ungroup_nodes"; ids: string[] }
