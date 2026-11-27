@@ -431,7 +431,8 @@ function InfiniteCanvasPage({ project, session }: { project: CanvasProject; sess
         (current: ConnectionHandle, targetNodeId: string) => {
             if (current.nodeId === targetNodeId) return;
 
-            const connection = normalizeConnection(current.nodeId, targetNodeId, nodesRef.current, current.handleType);
+            // Dropping onto an existing node makes it reference the drag origin from either handle.
+            const connection = normalizeConnection(current.nodeId, targetNodeId, nodesRef.current, "source");
             if (!connection) {
                 toast.warning("组只能作为连线的起点", workbenchMessageOptions.warning);
                 return;
@@ -473,7 +474,7 @@ function InfiniteCanvasPage({ project, session }: { project: CanvasProject; sess
 
                     if (!hitsHandle && !hitsInside && !hitsExpanded) return;
                     isNearNode = true;
-                    if (node.id === current.nodeId || !normalizeConnection(current.nodeId, node.id, nodesRef.current, current.handleType)) return;
+                    if (node.id === current.nodeId || !normalizeConnection(current.nodeId, node.id, nodesRef.current, "source")) return;
 
                     const priority = hitsInside ? 0 : hitsHandle ? 1 : 2;
                     if (priority < bestPriority) {
