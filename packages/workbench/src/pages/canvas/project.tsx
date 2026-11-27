@@ -1268,7 +1268,7 @@ function InfiniteCanvasPage({ project, session }: { project: CanvasProject; sess
 
                 {imageEditors}
 
-                <CanvasDialog title="图片详情" width="max(640px, 92vw)" open={Boolean(imagePreview)} onClose={closeImagePreview}>
+                <CanvasDialog title="图片详情" open={Boolean(imagePreview)} onClose={closeImagePreview}>
                     {imagePreview && <CanvasImageDetails
                         node={nodeById.get(imagePreview.nodeId)} preview={imagePreview}
                         onView={(slotId) => executeCommand(nodePreviewImage, { nodeId: imagePreview.nodeId, slotId }, commandOptions)}
