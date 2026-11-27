@@ -5,6 +5,13 @@ import { canvasDocumentSchema, pluginStandaloneWorkSchema, type CanvasDocument, 
 import { mapCanvasResources } from "./canvas/ops/archive-resources.js";
 
 export const storageWriteSchema = z.object({ value: z.unknown(), clientId: z.string() });
+// 只记原件标识，撤销图和图片内容仍由原有画布会话管理。
+export const canvasImageHistorySchema = z.object({
+    sessionId: z.string().min(1),
+    retained: z.array(z.string().min(1)),
+    removed: z.array(z.object({ nodeId: z.string().min(1), keys: z.array(z.string().min(1)) })),
+});
+export type CanvasImageHistory = z.infer<typeof canvasImageHistorySchema>;
 export type StorageWrite = z.infer<typeof storageWriteSchema>;
 /** 同步重放按删除时刻合并。普通首次删除无条件执行，重试只针对原来保存的版本。 */
 export type ProjectDeletion = { deletedAt: string; expectedDocument?: never } | { deletedAt?: never; expectedDocument?: CanvasDocument | null };

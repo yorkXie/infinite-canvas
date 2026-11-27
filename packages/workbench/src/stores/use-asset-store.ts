@@ -150,11 +150,11 @@ export async function flushAssetWrites() {
     if (pendingWrites.length) await savePendingAssetWrites();
 }
 
-async function readStoredAssets() {
+async function readStoredLibrary() {
     const value = await storage.state.getItem<string>(assetLibraryKey);
-    if (value === null) return [];
+    if (value === null) return { assets: [], folders: [] };
     try {
-        return assetLibrarySchema.parse(JSON.parse(value)).state.assets;
+        return assetLibrarySchema.parse(JSON.parse(value)).state;
     } catch {
         throw new StorageError("STORAGE_INVALID");
     }
@@ -166,7 +166,7 @@ export async function readAssetsForSync() {
     if (!reloadSyncAssets) return current;
     // 整库写回执未知时，先等本页后续条目编辑落盘，再读取真正的合并基线。
     await flushAssetWrites();
-    const stored = await readStoredAssets();
+    const { assets: stored } = await readStoredLibrary();
     if (useAssetStore.getState().assets !== current) throw new PluginError("PLUGIN_CONFLICT");
     lastLocalAssets = stored;
     reloadSyncAssets = false;
@@ -320,3 +320,20 @@ export const useAssetStore = create<AssetStore>()(
         },
     ),
 );
+
+storage.state.subscribe?.((key) => {
+    if (key !== assetLibraryKey || !useAssetStore.getState().hydrated) return;
+    void (async () => {
+        // 回收与其他窗口的编辑同样从磁盘发布，只接收已合并且仍是最新的结果。
+        let before: AssetStore;
+        let stored: Awaited<ReturnType<typeof readStoredLibrary>>;
+        do {
+            await flushAssetWrites();
+            before = useAssetStore.getState();
+            stored = await readStoredLibrary();
+        } while (before !== useAssetStore.getState());
+        lastLocalAssets = stored.assets;
+        lastLocalFolders = stored.folders ?? [];
+        useAssetStore.setState({ assets: lastLocalAssets, folders: lastLocalFolders });
+    })().catch(reportStorageError);
+});

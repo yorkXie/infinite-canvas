@@ -2,7 +2,7 @@ import { create } from "zustand";
 import { nanoid } from "nanoid";
 import type { StorageAdapter, StorageCollection } from "@infinite-canvas/shared/storage";
 import { canvasDocumentSchema, type CanvasDocument, type PluginProjectDomainRecord } from "@infinite-canvas/shared/canvas/schema/canvas";
-import { serializeCanvasDocument, StorageError } from "@infinite-canvas/shared/storage-data";
+import { serializeCanvasDocument, StorageError, type CanvasImageHistory } from "@infinite-canvas/shared/storage-data";
 import { PluginError } from "@infinite-canvas/shared/plugins";
 import { readonlySnapshot } from "@infinite-canvas/plugin-sdk/readonly-snapshot";
 import type { CanvasChangeSource } from "@infinite-canvas/plugin-sdk";
@@ -18,9 +18,10 @@ export type CanvasProject = CanvasDocument & {
 };
 export type CanvasDeletedProject = { id: string; deletedAt: string };
 type SaveStatus = "saved" | "pending" | "saving" | "error";
-export type CanvasSaveCommit = { sessionId: string; revision: number; source: CanvasChangeSource };
+export type CanvasSaveCommit = { sessionId: string; revision: number; source: CanvasChangeSource; imageHistory?: CanvasImageHistory };
 export type CanvasSaveReceipt = { projectId: string; revision: number; snapshot: CanvasDocument | null; commit?: CanvasSaveCommit } & ({ status: "saved" } | { status: "failed"; code: StorageError["code"] });
 export type CanvasStore = {
+    closeImageHistory?: StorageAdapter["projects"]["closeImageHistory"];
     hydrated: boolean;
     loadError: string;
     projects: CanvasProject[];
@@ -125,8 +126,9 @@ export function createCanvasStore(projects: StorageAdapter["projects"], preferen
         const write = Promise.resolve().then(async () => {
             try {
                 if (document !== null) {
-                    const snapshot = document = serializeCanvasDocument(document);
-                    await projects.setItem(id, snapshot);
+                    document = serializeCanvasDocument(document);
+                    if (snapshot.commit?.imageHistory && projects.saveWithImageHistory) await projects.saveWithImageHistory(document, snapshot.commit.imageHistory);
+                    else await projects.setItem(id, document);
                 } else if (snapshot.deletedAt !== undefined && projects.deleteProject) {
                     await (async () => {
                         const record = await projects.deleteProject!(id, { deletedAt: snapshot.deletedAt });
@@ -368,6 +370,7 @@ export function createCanvasStore(projects: StorageAdapter["projects"], preferen
             return loading;
         },
         flush: flushAccepted,
+        closeImageHistory: projects.closeImageHistory,
         subscribeSaves(listener) { listeners.add(listener); return () => { listeners.delete(listener); }; },
         reloadProject(id) {
             const read = refreshDocument(id, true);

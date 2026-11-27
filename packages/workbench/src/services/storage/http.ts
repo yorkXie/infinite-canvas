@@ -16,6 +16,7 @@ export function createHttpStorage(): LocalStorageAdapter {
     const clientId = crypto.randomUUID();
     const listeners = new Map<string, Set<(key: string | null) => void>>();
     const collections = new Map<string, StorageCollection>();
+    const historyProjects = new Map<string, string>();
     const writes = new Map<string, Promise<unknown>>();
     const closeSocket = openLocalSocket("/api/storage/events", (type, data) => {
         if (type === "ready") return listeners.forEach((callbacks) => callbacks.forEach((listener) => listener(null)));
@@ -24,6 +25,16 @@ export function createHttpStorage(): LocalStorageAdapter {
         listeners.get(change.collection)?.forEach((listener) => listener(change.key));
     }, () => reportStorageError(new StorageError("STORAGE_UNAVAILABLE")));
     window.addEventListener("pagehide", closeSocket, { once: true });
+
+    function historyEndPath(projectId: string, sessionId: string) {
+        return `/api/storage/projects/${encodeURIComponent(projectId)}/history/${encodeURIComponent(sessionId)}/close`;
+    }
+
+    window.addEventListener("pagehide", (event) => {
+        if (!event.persisted) for (const [sessionId, projectId] of historyProjects) {
+            navigator.sendBeacon(historyEndPath(projectId, sessionId));
+        }
+    });
 
     async function request(path: string, init?: RequestInit) {
         try {
@@ -117,6 +128,11 @@ export function createHttpStorage(): LocalStorageAdapter {
     }
     const stateCollections: Record<string, string> = { [assetLibraryKey]: "library", "infinite-canvas:call_scripts": "scripts" };
     const state: StorageCollection = {
+        subscribe(listener) {
+            const unsubscribes = Object.entries(stateCollections).map(([key, name]) =>
+                collection(name).subscribe!(() => listener(key)));
+            return () => unsubscribes.forEach(unsubscribe => unsubscribe());
+        },
         async getItem<T>(key: string) {
             const value = await collection(stateCollections[key]).getItem("state");
             return value === null ? null : JSON.stringify(value) as T;
@@ -145,6 +161,20 @@ export function createHttpStorage(): LocalStorageAdapter {
         },
         kind: "server", state, projects: {
             ...collection("projects"),
+            saveWithImageHistory(document, history) {
+                historyProjects.set(history.sessionId, document.id);
+                const body = JSON.stringify({ value: document, history, clientId });
+                return writeInOrder("projects", async () => {
+                    await request(`/api/storage/projects/${encodeURIComponent(document.id)}`, { method: "PUT", headers: { "content-type": "application/json" }, body });
+                });
+            },
+            closeImageHistory(projectId, sessionId) {
+                if (!historyProjects.has(sessionId)) return Promise.resolve();
+                return writeInOrder("projects", async () => {
+                    await request(historyEndPath(projectId, sessionId), { method: "POST" });
+                    historyProjects.delete(sessionId);
+                });
+            },
             deleteProject(key, deletion) {
                 return writeInOrder("projects", async () => (await request(`/api/storage/projects/${encodeURIComponent(key)}`, {
                     method: "PUT", headers: { "content-type": "application/json" }, body: JSON.stringify({ value: null, clientId, deletion }),

@@ -10,10 +10,12 @@ import { canvasDocumentSchema, type CanvasDocument, type PluginStandaloneWork } 
 import {
     canCompareChatSync, canCompareWorkSync, chatSyncBaseline, nextRecordUpdatedAt, ordinaryChatWrite, projectDeletionSchema, sameChatSyncRecord, sameWorkOwner,
     serializeCanvasDocument, serializeStandaloneWork, serializeStorageData, storedChatSyncRecord, storedWorkSyncRecord, StorageError, workSyncBaseline,
-    type ChatSyncRecord, type ProjectDeletion, type StorageChange, type StorageRecord, type WorkSyncRecord,
+    type CanvasImageHistory, type ChatSyncRecord, type ProjectDeletion, type StorageChange, type StorageRecord, type WorkSyncRecord,
 } from "@infinite-canvas/shared/storage-data";
 import { storageCategoryInfo, type StorageCategoryUsage, type StorageEntry, type StorageUsage } from "@infinite-canvas/shared/storage-inspection";
 import { collectStorageReferences, collectStringValues, referenceCollections, type StorageReference } from "@infinite-canvas/shared/resource-references";
+import type { ModelTask } from "@infinite-canvas/shared/model-http";
+import { detachableResults, inspectImageLibrary, updateImageRetention, type ImageRetention, type RemovedImage } from "./canvas-image-retention.js";
 import { logger } from "../utils/logger.js";
 import { archiveResourceSchema, type ArchiveInstall, type ArchivePreferences, type ArchiveResource } from "@infinite-canvas/shared/work-archive";
 import { applyAssetEdits, assetLibraryEditsSchema, type AssetLibraryEdits } from "@infinite-canvas/shared/sync-records";
@@ -65,6 +67,9 @@ export class FsStorage {
     private queue: Promise<unknown> = Promise.resolve();
     private listeners = new Set<(event: StorageChange) => void>();
     private closing = false;
+    private closedHistories = new Set<string>();
+    private retentionNeedsCheck = true;
+    private imageRetention: ImageRetention = { sessions: [], pending: [] };
     private constructor(readonly directory: string, private readonly lock: FileHandle) {}
 
     static async open(directory: string) {
@@ -80,7 +85,14 @@ export class FsStorage {
                 if ((error as NodeJS.ErrnoException).code !== "ENOENT") throw error;
                 await writeFile(manifest, JSON.stringify({ schemaVersion: 1, id: randomUUID() }, null, 2), { mode: 0o600 });
             }
-            return new FsStorage(directory, lock);
+            const storage = new FsStorage(directory, lock);
+            const retention = await readDiskJson<ImageRetention>(storage.retentionFile);
+            if (retention) {
+                storage.imageRetention = retention;
+                // 上次退出前已解除保护的文件，可继续尚未写完的回收；仍受保护的会话不按时间过期。
+                await storage.collectDeletedImages().catch(error => logger.error("恢复画布图片回收失败", { error }));
+            }
+            return storage;
         } catch (error) {
             await lock.close();
             throw error;
@@ -176,16 +188,103 @@ export class FsStorage {
         };
     }
 
+    private get retentionFile() { return path.join(this.directory, "private", "canvas-image-history.json"); }
+
+    private async writeRetention(state: ImageRetention) {
+        if (state.pending.length || state.sessions.length) await writeDiskJson(this.retentionFile, state);
+        else await rm(this.retentionFile, { force: true });
+        this.imageRetention = state;
+        this.retentionNeedsCheck = true;
+    }
+
+    closeImageHistory(projectId: string, sessionId: string) {
+        return this.commit(async () => {
+            this.closedHistories.add(JSON.stringify([projectId, sessionId]));
+            const sessions = this.imageRetention.sessions.filter(row => row.id !== sessionId || row.projectId !== projectId);
+            if (sessions.length !== this.imageRetention.sessions.length) await this.writeRetention({ ...this.imageRetention, sessions });
+            await this.collectDeletedImages();
+        });
+    }
+
+    private async collectDeletedImages() {
+        const cleared = { files: 0, bytes: 0 };
+        const { sessions, pending } = this.imageRetention;
+        if (!pending.length) return cleared;
+        const retained = new Set(sessions.flatMap(session => session.keys));
+        const ready = pending.filter(item => !retained.has(item.key));
+        if (!ready.length) return cleared;
+
+        // 完整检查所有持久引用后才修改库记录、任务结果和原件。
+        const used = new Set<string>();
+        const canceled = new Set<RemovedImage>();
+        for (const directory of recordDirectories) {
+            if (directory === directories.library || directory === directories.task) continue;
+            for (const { row } of await readRows(path.join(this.directory, directory))) {
+                collectStringValues(row.value, used);
+                if (directory === directories.projects && row.value) {
+                    const owners = ready.filter(item => item.projectId === row.key);
+                    if (owners.length) {
+                        for (const node of (row.value as CanvasDocument).nodes) {
+                            for (const item of owners) if (item.nodeId === node.id && (node.metadata?.storageKey === item.key || node.metadata?.images?.some(slot => slot.storageKey === item.key))) canceled.add(item);
+                        }
+                    }
+                }
+            }
+        }
+        for (const name of await readNames(path.join(this.directory, pluginData))) {
+            for (const { row } of await readRows(path.join(this.directory, pluginData, name))) collectStringValues(row.value, used);
+        }
+        const owners = ready.filter(item => !canceled.has(item));
+        const library = await this.read("library", "state");
+        const auto = library?.value ? inspectImageLibrary(library.value, owners, used) : [];
+        for (const row of await this.list("library")) if (row.key !== "state") collectStringValues(row.value, used);
+        const taskChanges = [];
+        for (const { row } of await readRows(this.collectionPath("task"))) {
+            if (!row.value) continue;
+            const record = row.value as { snapshot: ModelTask };
+            const results = detachableResults(record, owners, used);
+            if (results.length) taskChanges.push({ row, record, results });
+        }
+        const unused = new Set(owners.map(item => item.key).filter(key => !used.has(key)));
+        const remove = auto.filter(asset => asset.kind === "image" && unused.has(asset.data.storageKey!)).map(asset => asset.id);
+        if (remove.length) await this.replace("library", { key: "state", value: applyAssetEdits(library?.value, { put: [], remove }) }, "canvas-image-cleanup");
+        for (const { row, record, results } of taskChanges) {
+            const { snapshot } = record;
+            if (!Array.isArray(snapshot.result) || !results.some(asset => unused.has(asset.key))) continue;
+            const result = snapshot.result.filter(asset => !results.includes(asset) || !unused.has(asset.key));
+            await this.replace("task", { ...row, value: { ...record, snapshot: { ...snapshot, result } } }, "canvas-image-cleanup");
+        }
+        for (const key of unused) {
+            for (const collection of ["previews", "images"]) {
+                const record = await this.read<{ mime: string }>(collection, key);
+                if (!record?.value) continue;
+                const file = this.binaryPath(collection, key, record.value.mime);
+                const size = await stat(file).catch((error: NodeJS.ErrnoException) => { if (error.code !== "ENOENT") throw error; });
+                if (size) {
+                    await rm(file);
+                    cleared.files += 1;
+                    cleared.bytes += size.size;
+                }
+                await rm(this.recordPath(collection, key), { force: true });
+                this.notify(collection, key, "canvas-image-cleanup");
+            }
+        }
+        const remaining = pending.filter(item => !unused.has(item.key) && !canceled.has(item));
+        if (remaining.length !== pending.length) await this.writeRetention({ sessions, pending: remaining });
+        return cleared;
+    }
+
     /** 删除没有被任何记录引用的原件及缩略图，返回删除的文件数与字节数。 */
     cleanup() {
         return this.commit(async () => {
             const subdirectories = async (parent: string) => (await readNames(path.join(this.directory, parent))).map((name) => path.join(parent, name));
             const [dataDirectories, fileDirectories] = await Promise.all([subdirectories(pluginData), subdirectories(pluginFiles)]);
-            const used = new Set<string>();
+            const cleared = await this.collectDeletedImages();
+            const used = new Set(this.imageRetention.sessions.flatMap(session => session.keys));
             for (const directory of [...recordDirectories, ...dataDirectories]) {
                 for (const { row } of await readRows(path.join(this.directory, directory))) collectStringValues(row.value, used);
             }
-            let files = 0, bytes = 0;
+            let { files, bytes } = cleared;
             for (const directory of [...binaryDirectories, ...fileDirectories]) {
                 for (const { base, row } of await readRows(path.join(this.directory, directory))) {
                     if (used.has(row.key)) continue;
@@ -329,7 +428,7 @@ export class FsStorage {
         });
     }
 
-    save(collection: string, key: string, value: unknown, clientId: string) {
+    save(collection: string, key: string, value: unknown, clientId: string, history?: CanvasImageHistory) {
         if (isBinary(collection)) return Promise.reject(new StorageError("STORAGE_INVALID"));
         if (collection === "projects" && value === null) return this.deleteProject(key, {}, clientId);
         if (collection === "chats") return this.writeChat(key, value === null ? null : storedChatSyncRecord({ key, value: structuredClone(value) }), clientId).then((record) => {
@@ -342,6 +441,11 @@ export class FsStorage {
                 const result = canvasDocumentSchema.safeParse(value);
                 if (!result.success || result.data.id !== key) throw new StorageError("STORAGE_INVALID");
                 value = serializeCanvasDocument(value as CanvasDocument);
+                if (history) {
+                    const ended = this.closedHistories.has(JSON.stringify([key, history.sessionId]));
+                    const next = updateImageRetention(this.imageRetention, key, ended ? { ...history, retained: [] } : history);
+                    if (!isDeepStrictEqual(next, this.imageRetention)) await this.writeRetention(next);
+                }
             } else if (collection === "works" && value !== null) {
                 const work = serializeStandaloneWork(key, value);
                 const previous = await this.read<PluginStandaloneWork>(collection, key);
@@ -349,7 +453,12 @@ export class FsStorage {
                 value = work;
                 updatedAt = nextRecordUpdatedAt(previous?.updatedAt);
             } else if (collection !== "library" && !collection.startsWith("plugin:") && !(collection === "privateConfig" && key === "workspace")) value = serializeStorageData(value);
-            return this.replace(collection, { key, value, ...(updatedAt && { updatedAt }), ...(value === null && { deletedAt: new Date().toISOString() }) }, clientId);
+            const saved = await this.replace(collection, { key, value, ...(updatedAt && { updatedAt }), ...(value === null && { deletedAt: new Date().toISOString() }) }, clientId);
+            if (history && this.retentionNeedsCheck) {
+                await this.collectDeletedImages();
+                this.retentionNeedsCheck = false;
+            }
+            return saved;
         });
     }
 

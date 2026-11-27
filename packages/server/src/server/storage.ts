@@ -8,7 +8,7 @@ import { spawn } from "node:child_process";
 import { pipeline } from "node:stream/promises";
 import { buffer } from "node:stream/consumers";
 import { archiveResourceSchema, decodeArchiveInstall } from "@infinite-canvas/shared/work-archive";
-import { chatSyncRecordSchema, projectDeletionSchema, StorageError, storageWriteSchema, workSyncRecordSchema } from "@infinite-canvas/shared/storage-data";
+import { canvasImageHistorySchema, chatSyncRecordSchema, projectDeletionSchema, StorageError, storageWriteSchema, workSyncRecordSchema } from "@infinite-canvas/shared/storage-data";
 import { publicStorageCollections, type FsStorage } from "../storage/fs-storage.js";
 
 const syncWriteSchema = z.object({ expected: z.string().regex(/^[a-f0-9]{64}$/).nullable(), next: pluginSyncSnapshotSchema, clientId: z.string() }).strict();
@@ -126,13 +126,18 @@ export function mountStorage(app: Express, storage: FsStorage) {
         const { expected, next, clientId } = parsed.data;
         res.json(await storage.comparePluginSyncData(req.params.collection.slice("plugin:".length), req.params.domainId, expected, next, clientId));
     });
+    app.post("/api/storage/projects/:projectId/history/:sessionId/close", async (req, res) => {
+        await storage.closeImageHistory(req.params.projectId, req.params.sessionId);
+        res.status(204).end();
+    });
     app.put("/api/storage/:collection/:key", express.json({ limit: "30mb" }), async (req, res) => {
-        const parsed = storageWriteSchema.extend({ deletion: projectDeletionSchema.optional() }).safeParse(req.body);
+        const parsed = storageWriteSchema.extend({ deletion: projectDeletionSchema.optional(), history: canvasImageHistorySchema.optional() }).safeParse(req.body);
         if (!parsed.success) throw new StorageError("STORAGE_INVALID");
-        const { value, clientId, deletion } = parsed.data;
+        const { value, clientId, deletion, history } = parsed.data;
+        if (history && (req.params.collection !== "projects" || value == null)) throw new StorageError("STORAGE_INVALID");
         if (deletion && (req.params.collection !== "projects" || value !== null)) throw new StorageError("STORAGE_INVALID");
         const record = deletion ? await storage.deleteProject(req.params.key, deletion, clientId)
-            : await storage.save(req.params.collection, req.params.key, value, clientId);
+            : await storage.save(req.params.collection, req.params.key, value, clientId, history);
         if (req.params.collection === "chats" && value !== null && req.get("prefer") === "return=minimal") {
             res.set("x-canvas-updated-at", (record.value as ArchiveThread).updatedAt).status(204).end();
         } else if (req.params.collection === "promptCache" && req.get("prefer") === "return=minimal") res.status(204).end();

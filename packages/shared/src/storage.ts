@@ -1,6 +1,6 @@
 import type { StorageMode } from "./runtime.js";
 import type { CanvasDocument, CanvasWebVideoTask, PluginStandaloneWork } from "./canvas/schema/canvas.js";
-import type { ChatSyncRecord, ProjectDeletion, StorageRecord, WorkSyncRecord } from "./storage-data.js";
+import type { CanvasImageHistory, ChatSyncRecord, ProjectDeletion, StorageRecord, WorkSyncRecord } from "./storage-data.js";
 export type { ChatSyncRecord, WorkSyncRecord } from "./storage-data.js";
 import type { ArchiveInstall, ArchivePreferences } from "./work-archive.js";
 import type { PluginSyncDomainSnapshot } from "./sync-data.js";
@@ -11,7 +11,7 @@ import type { AssetLibraryEdits } from "./sync-records.js";
 /**
  * 业务记录集合；实现负责持久化，不依赖具体运行环境。
  * images、media 与插件文件集合保存二进制原件：每份新内容使用新键写入，写入后不再覆盖，
- * 业务删除只移除记录，不删除原件；未被任何记录引用的原件由用户在本地存储中主动清理。
+ * 本地画布删除的图片在历史失效后按引用回收；其余未使用文件可从本地存储手动清理。
  */
 export interface StorageCollection {
     getItem<T>(key: string): Promise<T | null>;
@@ -37,6 +37,8 @@ export interface StorageAdapter {
         save(next: WebPluginVideoReceipt, previous?: VideoTaskIdentity, blob?: Blob): Promise<WebPluginVideoReceipt>;
     };
     readonly projects: StorageCollection & {
+        saveWithImageHistory?(document: CanvasDocument, history: CanvasImageHistory): Promise<void>;
+        closeImageHistory?(projectId: string, sessionId: string): Promise<void>;
         deleteProject?(key: string, deletion: ProjectDeletion): Promise<StorageRecord<CanvasDocument>>;
     };
     readonly works: StorageCollection & {

@@ -3,6 +3,8 @@ import { ModelExecutionError } from "@infinite-canvas/shared/model-http";
 import { nanoid } from "nanoid";
 import { z } from "zod";
 import { applyOps, canvasDocumentOpSchema, type CanvasDocumentOp } from "@infinite-canvas/shared/canvas/ops/apply";
+import { visitNodeMedia } from "@infinite-canvas/shared/canvas/ops/archive-resources";
+import type { CanvasImageHistory } from "@infinite-canvas/shared/storage-data";
 import type { CanvasGraph } from "@infinite-canvas/shared/canvas/schema/canvas";
 import { PluginError } from "@infinite-canvas/shared/plugins";
 import { readonlySnapshot } from "@infinite-canvas/plugin-sdk/readonly-snapshot";
@@ -12,7 +14,7 @@ import type { CanvasProject, CanvasSaveReceipt, CanvasStore } from "@workbench/s
 export type CanvasSessionSnapshot = CanvasGraph & { projectId: string; revision: number; selection: { nodeIds: string[]; connectionId: string | null }; viewport: CanvasViewport; canUndo: boolean; canRedo: boolean };
 type History = { past: CanvasGraph[]; future: CanvasGraph[] };
 type TransactionOptions = CanvasTransactionOptions & { source: CanvasChangeSource };
-type SessionOptions = { project: Pick<CanvasProject, "id" | "nodes" | "connections" | "viewport">; store: Pick<CanvasStore, "openProject" | "updateProject" | "flush" | "subscribeSaves">; signal?: AbortSignal };
+type SessionOptions = { project: Pick<CanvasProject, "id" | "nodes" | "connections" | "viewport">; store: Pick<CanvasStore, "openProject" | "updateProject" | "flush" | "subscribeSaves" | "closeImageHistory">; signal?: AbortSignal };
 const selectionSchema = z.object({ nodeIds: z.array(z.string()), connectionId: z.string().nullable() }).strict();
 const viewportSchema = z.object({ x: z.number().finite(), y: z.number().finite(), k: z.number().finite().positive() }).strict();
 
@@ -32,9 +34,39 @@ export class CanvasSession implements PublicCanvasSession {
     private preview?: { graph: CanvasGraph };
     private viewportTimer?: ReturnType<typeof setTimeout>;
     private savedRevision = 0;
+    private removedImages = new Map<string, Set<string>>();
+    private graphImages = new WeakMap<CanvasGraph, Set<string>>();
     private unsubscribeSaves: () => void;
     private closing?: Promise<void>;
     private removeAbort?: () => void;
+
+    private imageHistory(graph: CanvasGraph, removedIds?: readonly string[]): CanvasImageHistory | undefined {
+        if (!this.options.store.closeImageHistory) return;
+        if (removedIds?.length) {
+            const removed = new Set(removedIds);
+            for (const node of this.document.nodes) {
+                if (!removed.has(node.id)) continue;
+                const keys = this.removedImages.get(node.id) ?? new Set<string>();
+                const meta = node.metadata;
+                if ((node.type === "image" || meta?.mediaKind === "image") && meta?.storageKey) keys.add(meta.storageKey);
+                for (const slot of meta?.images ?? []) if (slot.storageKey) keys.add(slot.storageKey);
+                if (keys.size) this.removedImages.set(node.id, keys);
+            }
+        }
+        const retained = new Set<string>();
+        for (const snapshot of [...this.history.past, ...this.history.future, graph]) {
+            let keys = this.graphImages.get(snapshot);
+            if (!keys) {
+                const collected = new Set<string>();
+                for (const node of snapshot.nodes) visitNodeMedia(node, (media) => { if (media.collection === "images") collected.add(media.key); });
+                this.graphImages.set(snapshot, collected);
+                keys = collected;
+            }
+            for (const key of keys) retained.add(key);
+        }
+        const removed = Array.from(this.removedImages, ([nodeId, keys]) => ({ nodeId, keys: [...keys] }));
+        return { sessionId: this.id, retained: [...retained], removed };
+    }
 
     constructor(private options: SessionOptions) {
         this.projectId = options.project.id;
@@ -128,10 +160,11 @@ export class CanvasSession implements PublicCanvasSession {
         const document = readonlySnapshot(graph) as CanvasGraph;
         const snapshot = readonlySnapshot({ ...visualGraph, projectId: this.projectId, revision: before.revision + Number(changed), selection, viewport, canUndo: nextHistory.past.length > 0, canRedo: nextHistory.future.length > 0 }) as CanvasSessionSnapshot;
         if (changed) this.preview = undefined;
-        this.document = document;
         this.history = readonlySnapshot(nextHistory) as History;
+        const imageHistory = changed ? this.imageHistory(document, removedNodeIds) : undefined;
+        this.document = document;
         this.snapshot = snapshot;
-        if (changed) this.options.store.updateProject(this.projectId, document, { sessionId: this.id, revision: snapshot.revision, source });
+        if (changed) this.options.store.updateProject(this.projectId, document, { sessionId: this.id, revision: snapshot.revision, source, imageHistory });
         if (viewport !== before.viewport) this.scheduleViewport();
         this.announce(() => {
             this.publish();
@@ -218,7 +251,7 @@ export class CanvasSession implements PublicCanvasSession {
         this.snapshot = readonlySnapshot({ ...before, ...target, revision: before.revision + 1, selection: { nodeIds: [], connectionId: null }, canUndo: next.past.length > 0, canRedo: next.future.length > 0 }) as CanvasSessionSnapshot;
         const snapshot = this.snapshot;
         const origin = readonlySnapshot({ ...source });
-        this.options.store.updateProject(this.projectId, target, { sessionId: this.id, revision: this.snapshot.revision, source: origin });
+        this.options.store.updateProject(this.projectId, target, { sessionId: this.id, revision: this.snapshot.revision, source: origin, imageHistory: this.imageHistory(target) });
         this.announce(() => {
             this.publish();
             this.emit("document.committed", { projectId: this.projectId, revision: snapshot.revision, source: origin, operation: direction === "past" ? "undo" : "redo" });
@@ -252,6 +285,11 @@ export class CanvasSession implements PublicCanvasSession {
         if (receipt.status === "failed") this.announce(() => this.emit("document.saveFailed", { projectId: this.projectId, revision, source, code: receipt.code }));
         else if (revision > this.savedRevision) {
             this.savedRevision = revision;
+            for (const { nodeId, keys } of receipt.commit?.imageHistory?.removed ?? []) {
+                const pending = this.removedImages.get(nodeId);
+                for (const key of keys) pending?.delete(key);
+                if (!pending?.size) this.removedImages.delete(nodeId);
+            }
             this.announce(() => this.emit("document.saved", { projectId: this.projectId, revision, source }));
         }
     }
@@ -272,6 +310,9 @@ export class CanvasSession implements PublicCanvasSession {
         this.listeners.clear();
         this.events.clear();
         this.notifications = [];
-        return this.closing = this.options.store.flush(this.projectId).then(() => { this.unsubscribeSaves(); }).catch((error) => { this.closing = undefined; throw error; });
+        return this.closing = this.options.store.flush(this.projectId).then(async () => {
+            await this.options.store.closeImageHistory?.(this.projectId, this.id);
+            this.unsubscribeSaves();
+        }).catch((error) => { this.closing = undefined; throw error; });
     }
 }
