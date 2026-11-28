@@ -66,6 +66,8 @@ export default function CanvasPage() {
 
     if (hydrated && (mode === "new" || mode === "recent") && (!scope || failedAutoScope !== scope)) return <main className="flex h-full items-center justify-center bg-background text-sm text-stone-500">正在打开画布...</main>;
 
+    const projectsByCreation = [...projects].sort((a, b) => b.createdAt.localeCompare(a.createdAt) || a.id.localeCompare(b.id));
+
     return (
         <main className="canvas-library generation-workspace-controls h-full overflow-auto bg-background text-stone-950 dark:text-stone-100">
             <div className="mx-auto flex w-full max-w-6xl flex-col gap-8 px-6 py-10">
@@ -103,7 +105,7 @@ export default function CanvasPage() {
                     <section className="flex min-h-[360px] items-center justify-center border-y border-stone-200 text-sm text-stone-500 dark:border-stone-800">正在加载画布...</section>
                 ) : projects.length ? (
                     <div className="grid gap-5 sm:grid-cols-2 xl:grid-cols-3">
-                        {projects.map((project) => (
+                        {projectsByCreation.map((project) => (
                             <CanvasProjectCard key={project.id} project={project} />
                         ))}
                     </div>
